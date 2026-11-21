@@ -1,0 +1,368 @@
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import type { Movement, ReportSummary } from '../types';
+import { MONTHS_ES, formatCurrency, formatDateTime } from './api';
+
+export function buildExitReportPdf(movement: Movement): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+
+  // Top Header Band
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, 215.9, 28, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('AlmacénPro', 14, 12);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text('COMPROBANTE OFICIAL DE SALIDA DE MATERIAL', 14, 19);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(`FOLIO: ${movement.folio}`, 201, 13, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text(`Fecha: ${formatDateTime(movement.created_at)}`, 201, 19.5, { align: 'right' });
+
+  // Responsible & Destination Box
+  doc.setTextColor(15, 23, 42);
+  doc.setDrawColor(226, 232, 240);
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(14, 35, 187.9, 34, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text('RESPONSABLE QUE RETIRA / RECIBE', 19, 42);
+  doc.text('ÁREA / DESTINO', 112, 42);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text(movement.responsible_name || 'No especificado', 19, 48.5);
+  doc.text(movement.responsible_area || 'Operaciones', 112, 48.5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text('DESPACHADO POR', 19, 57.5);
+  doc.text('TIPO DE MOVIMIENTO', 112, 57.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text(movement.operator_name || 'Operador de Almacén', 19, 63.5);
+  doc.text('Salida de Inventario (Descuento Automático)', 112, 63.5);
+
+  // Item Table
+  autoTable(doc, {
+    startY: 76,
+    margin: { left: 14, right: 14 },
+    headStyles: {
+      fillColor: [29, 78, 216],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 9,
+    },
+    bodyStyles: {
+      fontSize: 9.5,
+      textColor: [15, 23, 42],
+    },
+    head: [['SKU / Código', 'Descripción del Ítem o Material', 'Unidad', 'Cantidad', 'Costo Unit.', 'Valor Total']],
+    body: [
+      [
+        `${movement.sku}\n${movement.barcode}`,
+        movement.product_name,
+        movement.unit || 'Pza',
+        String(movement.quantity),
+        formatCurrency(movement.cost_resulting),
+        formatCurrency(movement.total_value),
+      ],
+    ],
+    columnStyles: {
+      0: { cellWidth: 34 },
+      2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 20, halign: 'right' },
+      4: { cellWidth: 26, halign: 'right' },
+      5: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  const afterTableY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+
+  // Detail & Justification Box
+  doc.setDrawColor(226, 232, 240);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(14, afterTableY, 187.9, 30, 2, 2, 'D');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text('DETALLE / MOTIVO DE LA SALIDA', 19, afterTableY + 7);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  const splitDetail = doc.splitTextToSize(
+    movement.reason_detail || 'Sin observaciones adicionales.',
+    176
+  );
+  doc.text(splitDetail, 19, afterTableY + 14);
+
+  // Signature Lines
+  const sigY = afterTableY + 54;
+  doc.setDrawColor(148, 163, 184);
+  doc.line(22, sigY, 92, sigY);
+  doc.line(124, sigY, 194, sigY);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text(movement.responsible_name || 'Responsable', 57, sigY + 5.5, { align: 'center' });
+  doc.text(movement.operator_name || 'Almacén Central', 159, sigY + 5.5, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Firma de Recibido (Responsable)', 57, sigY + 10, { align: 'center' });
+  doc.text('Firma de Entrega (Almacén)', 159, sigY + 10, { align: 'center' });
+
+  // Footer
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    `Documento generado por AlmacénPro · Folio ${movement.folio}`,
+    107.9,
+    265,
+    { align: 'center' }
+  );
+
+  return doc;
+}
+
+export function downloadExitPdf(movement: Movement): void {
+  const doc = buildExitReportPdf(movement);
+  doc.save(`Reporte_Salida_${movement.folio}.pdf`);
+}
+
+export async function shareExitPdfMobile(
+  movement: Movement
+): Promise<{ shared: boolean; message: string }> {
+  const doc = buildExitReportPdf(movement);
+  const blob = doc.output('blob');
+  const fileName = `Reporte_Salida_${movement.folio}.pdf`;
+  const file = new File([blob], fileName, { type: 'application/pdf' });
+
+  const summaryText = `Salida ${movement.folio}: ${movement.quantity} ${movement.unit} de ${movement.product_name}. Responsable: ${movement.responsible_name} (${movement.responsible_area}). Detalle: ${movement.reason_detail}`;
+
+  if (typeof navigator !== 'undefined' && 'share' in navigator) {
+    try {
+      const canShareFiles =
+        typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+      if (canShareFiles) {
+        await navigator.share({
+          title: `Reporte de Salida ${movement.folio}`,
+          text: summaryText,
+          files: [file],
+        });
+        return { shared: true, message: 'PDF compartido desde la plataforma móvil.' };
+      }
+      await navigator.share({
+        title: `Reporte de Salida ${movement.folio}`,
+        text: summaryText,
+      });
+      doc.save(fileName);
+      return {
+        shared: true,
+        message: 'Resumen compartido y PDF descargado para adjuntar.',
+      };
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return { shared: false, message: 'Compartir cancelado por el usuario.' };
+      }
+    }
+  }
+
+  doc.save(fileName);
+  return {
+    shared: false,
+    message: 'PDF descargado (tu navegador de escritorio no permite compartir archivos directamente).',
+  };
+}
+
+export function buildExitSummaryText(movement: Movement): string {
+  return [
+    `REPORTE DE SALIDA DE ALMACÉN — ${movement.folio}`,
+    `Fecha: ${formatDateTime(movement.created_at)}`,
+    `Producto: ${movement.product_name} (SKU: ${movement.sku} | Código: ${movement.barcode})`,
+    `Cantidad: ${movement.quantity} ${movement.unit}`,
+    `Costo Unitario: ${formatCurrency(movement.cost_resulting)} | Total: ${formatCurrency(movement.total_value)}`,
+    `Responsable: ${movement.responsible_name} (${movement.responsible_area})`,
+    `Despachado por: ${movement.operator_name || 'Almacén Central'}`,
+    `Detalle: ${movement.reason_detail}`,
+  ].join('\n');
+}
+
+export function exportExitByEmail(movement: Movement, recipientEmail = ''): void {
+  downloadExitPdf(movement);
+  const subject = encodeURIComponent(
+    `Reporte de Salida ${movement.folio} — ${movement.product_name}`
+  );
+  const body = encodeURIComponent(
+    `${buildExitSummaryText(movement)}\n\nNota: Se descargó el archivo Reporte_Salida_${movement.folio}.pdf para adjuntarlo a este correo.`
+  );
+  const mailto = `mailto:${encodeURIComponent(recipientEmail)}?subject=${subject}&body=${body}`;
+  const link = document.createElement('a');
+  link.href = mailto;
+  link.click();
+}
+
+export function downloadPeriodReportPdf(summary: ReportSummary): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const monthLabel = MONTHS_ES.find((m) => m.value === summary.month)?.label || summary.month;
+  const periodTitle =
+    summary.mode === 'annual' ? `Reporte Anual ${summary.year}` : `Reporte Mensual — ${monthLabel} ${summary.year}`;
+
+  const selectedUserName = summary.user_id
+    ? summary.filterUsers.find((u) => u.id === summary.user_id)?.name
+    : null;
+  const selectedCatName = summary.category_id
+    ? summary.filterCategories.find((c) => c.id === summary.category_id)?.name
+    : null;
+  const filterSubtitle = [
+    selectedUserName ? `Usuario: ${selectedUserName}` : null,
+    selectedCatName ? `Categoría: ${selectedCatName}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, 215.9, 26, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text('AlmacénPro', 14, 11);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.text(filterSubtitle ? `${periodTitle} (${filterSubtitle})` : periodTitle, 14, 18.5);
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-BO')}`, 201, 15, { align: 'right' });
+
+  // KPI summary row
+  autoTable(doc, {
+    startY: 32,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 8.5 },
+    bodyStyles: { fontSize: 9, fontStyle: 'bold' },
+    head: [['Movimientos', 'Ingresos (Unidades)', 'Valor Ingresos', 'Salidas (Unidades)', 'Valor Salidas']],
+    body: [
+      [
+        String(summary.totals.total_movements),
+        `${summary.totals.ingreso_units} (${summary.totals.ingreso_count} mov.)`,
+        formatCurrency(summary.totals.ingreso_value),
+        `${summary.totals.salida_units} (${summary.totals.salida_count} mov.)`,
+        formatCurrency(summary.totals.salida_value),
+      ],
+    ],
+  });
+
+  // Category Report Table
+  const yCat = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text('Resumen por Categoría', 14, yCat);
+
+  autoTable(doc, {
+    startY: yCat + 2.5,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    head: [['Categoría', 'Prod.', 'Stock', 'Valor Inv. (Bs.)', 'Entradas', 'Salidas', 'Mov. (Bs.)']],
+    body: summary.categoryReport.map((c) => [
+      c.name,
+      String(c.product_count),
+      String(c.stock_units),
+      formatCurrency(c.inventory_cost_value),
+      `+${c.ingreso_units}`,
+      `-${c.salida_units}`,
+      formatCurrency(c.ingreso_value + c.salida_value),
+    ]),
+  });
+
+  // User Report Table
+  const y1 = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text('Actividad por Usuario', 14, y1);
+
+  autoTable(doc, {
+    startY: y1 + 2.5,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [29, 78, 216], textColor: 255, fontSize: 8 },
+    bodyStyles: { fontSize: 8 },
+    head: [['Usuario', 'Rol', 'Mov.', 'Ingresos', 'Salidas', 'Unidades', 'Valor Operado', 'Pedidos']],
+    body: summary.userReport.map((u) => [
+      u.name,
+      u.role_name,
+      String(u.movement_count),
+      String(u.ingreso_count),
+      String(u.salida_count),
+      String(u.total_units),
+      formatCurrency(u.total_value),
+      String(u.orders_requested),
+    ]),
+  });
+
+  // Stock & Products Table (with Category)
+  const y2 = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text('Niveles de Stock Actualizados y Costos por Categoría', 14, y2);
+
+  autoTable(doc, {
+    startY: y2 + 2.5,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 7.5 },
+    bodyStyles: { fontSize: 7.5 },
+    head: [['SKU', 'Producto', 'Categoría', 'Stock', 'Mín.', 'Costo Prom.', 'Precio']],
+    body: summary.topProducts.slice(0, 20).map((p) => [
+      p.sku,
+      p.name,
+      p.category,
+      `${p.stock_current} ${p.unit}`,
+      String(p.stock_min),
+      formatCurrency(p.cost_current),
+      formatCurrency(p.price_current),
+    ]),
+  });
+
+  // Movement details when available
+  if (summary.movementDetails.length > 0) {
+    const y3 = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.text('Detalle de Movimientos del Período', 14, y3);
+
+    autoTable(doc, {
+      startY: y3 + 2.5,
+      margin: { left: 14, right: 14 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 7.5 },
+      bodyStyles: { fontSize: 7.5 },
+      head: [['Folio', 'Tipo', 'Producto', 'Categoría', 'Cant.', 'Operador / Resp.', 'Total (Bs.)']],
+      body: summary.movementDetails.slice(0, 35).map((m) => [
+        m.folio,
+        m.type,
+        m.product_name,
+        m.category || '—',
+        `${m.quantity} ${m.unit}`,
+        `${m.operator_name || 'Sistema'} / ${m.responsible_name}`,
+        formatCurrency(m.total_value),
+      ]),
+    });
+  }
+
+  doc.save(`AlmacenPro_${summary.mode === 'annual' ? `Anual_${summary.year}` : `Mensual_${summary.year}-${summary.month}`}.pdf`);
+}
