@@ -1,24 +1,21 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
   Edit3,
   FolderPlus,
   PackagePlus,
-  ScanLine,
   Search,
   X,
   XCircle,
 } from 'lucide-react';
 import { apiFetch, formatCurrency } from '../lib/api';
 import type { AuthUser, Category, Product } from '../types';
-import { BarcodeVisual } from '../components/BarcodeVisual';
 
 interface InventoryViewProps {
   user: AuthUser;
   externalSearch: string;
   onExternalSearchChange: (val: string) => void;
-  onOpenScanner: () => void;
   onStartEntry: (product: Product) => void;
   onStartExit: (product: Product) => void;
   onStartOrder: (product: Product) => void;
@@ -29,7 +26,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   user,
   externalSearch,
   onExternalSearchChange,
-  onOpenScanner,
   onStartEntry,
   onStartExit,
   onStartOrder,
@@ -53,16 +49,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (externalSearch.trim()) params.set('q', externalSearch.trim());
-      if (category !== 'ALL') params.set('category', category);
-      if (statusFilter !== 'ALL') params.set('status', statusFilter);
-
       const res = await apiFetch<{
         products: Product[];
         categories: string[];
         categoryList?: Category[];
-      }>(`/api/products?${params.toString()}`);
+      }>('/api/products');
       setProducts(res.products);
       setCategories(res.categories);
       if (res.categoryList) setCategoryList(res.categoryList);
@@ -72,14 +63,36 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [externalSearch, category, statusFilter]);
+  }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      loadProducts();
-    }, 140);
-    return () => clearTimeout(timer);
+    loadProducts();
   }, [loadProducts, refreshSignal]);
+
+  const displayedProducts = useMemo(() => {
+    const q = externalSearch.trim().toLowerCase();
+    return products.filter((p) => {
+      if (category !== 'ALL' && p.category !== category) return false;
+      if (statusFilter === 'OUT' && p.stock_current !== 0) return false;
+      if (statusFilter === 'LOW' && !(p.stock_current > 0 && p.stock_current <= p.stock_min)) {
+        return false;
+      }
+      if (statusFilter === 'OK' && p.stock_current <= p.stock_min) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        p.location.toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q)
+      );
+    });
+  }, [products, externalSearch, category, statusFilter]);
+
+  const totalDisplayedUnits = useMemo(
+    () => displayedProducts.reduce((acc, p) => acc + p.stock_current, 0),
+    [displayedProducts]
+  );
 
   const openNewModal = () => {
     setFormError('');
@@ -88,7 +101,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     const firstActiveCat = categoryList.find((c) => c.active === 1) || categoryList[0];
     setEditingProduct({
       sku: '',
-      barcode: `7501000${Math.floor(100000 + Math.random() * 899999)}`,
       name: '',
       description: '',
       category_id: firstActiveCat?.id,
@@ -185,18 +197,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             Catálogo e Inventario
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Búsqueda instantánea por código de barras, SKU o nombre · Precios en Bolivianos (Bs.)
+            Búsqueda en tiempo real por nombre, SKU, categoría o ubicación · Precios en Bolivianos (Bs.)
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onOpenScanner}
-            className="min-h-[44px] px-4 py-2 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-medium text-slate-800 dark:text-slate-200 flex items-center gap-2 whitespace-nowrap shrink-0"
-          >
-            <ScanLine className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-            <span>Escanear Código</span>
-          </button>
           {user.permissions.manage_products && (
             <button
               type="button"
@@ -219,7 +223,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               type="text"
               value={externalSearch}
               onChange={(e) => onExternalSearchChange(e.target.value)}
-              placeholder="Buscar por nombre, código de barras, SKU o ubicación..."
+              placeholder="Buscar en tiempo real por nombre, SKU, categoría o ubicación..."
               className="w-full min-h-[44px] pl-10 pr-9 py-2 text-sm bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-lg focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
             />
             {externalSearch && (
@@ -273,6 +277,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             ))}
           </div>
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 tabular-nums">
+          <span>
+            Mostrando <strong className="text-slate-900 dark:text-slate-100">{displayedProducts.length}</strong> de{' '}
+            {products.length} producto(s)
+          </span>
+          <span>
+            Cantidad total en existencia:{' '}
+            <strong className="font-mono text-slate-900 dark:text-slate-100">
+              {totalDisplayedUnits.toLocaleString('es-BO')}
+            </strong>{' '}
+            unidades
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -284,15 +302,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            Buscando en inventario...
+            Cargando catálogo de inventario...
           </div>
-        ) : products.length === 0 ? (
+        ) : displayedProducts.length === 0 ? (
           <div className="p-10 text-center space-y-2">
             <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
               No se encontraron productos
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Intenta con otro código de barras, nombre o limpia los filtros activos.
+              Intenta con otro nombre, SKU o limpia los filtros activos.
             </p>
           </div>
         ) : (
@@ -302,16 +320,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
                     <th className="py-3 px-4">Producto / Ubicación</th>
-                    <th className="py-3 px-4">Código de Barras / SKU</th>
+                    <th className="py-3 px-4">SKU</th>
                     <th className="py-3 px-4">Estado</th>
-                    <th className="py-3 px-4 text-right">Stock</th>
+                    <th className="py-3 px-4 text-right">Existencia</th>
                     <th className="py-3 px-4 text-right">Costo Ant. / Prom.</th>
                     <th className="py-3 px-4 text-right">Precio Actual</th>
                     <th className="py-3 px-4 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
-                  {products.map((p) => (
+                  {displayedProducts.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="py-3.5 px-4 max-w-xs">
                         <p className="font-semibold text-slate-900 dark:text-slate-100">{p.name}</p>
@@ -319,11 +337,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           {p.category} · {p.location}
                         </p>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <BarcodeVisual code={p.barcode} height={24} />
-                        <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
-                          SKU: {p.sku}
-                        </p>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 tabular-nums">
+                          {p.sku}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap">{renderStockBadge(p)}</td>
                       <td className="py-3.5 px-4 text-right font-mono tabular-nums whitespace-nowrap">
@@ -403,7 +420,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
             {/* Mobile & Tablet Touch Cards */}
             <div className="lg:hidden divide-y divide-slate-100 dark:divide-slate-800">
-              {products.map((p) => (
+              {displayedProducts.map((p) => (
                 <div key={p.id} className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -414,7 +431,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         {p.name}
                       </h4>
                       <p className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums">
-                        SKU: {p.sku} · Código: {p.barcode}
+                        SKU: {p.sku}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
@@ -523,7 +540,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveProduct} className="p-5 space-y-3.5 overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                     SKU *
@@ -536,31 +553,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                   />
                 </div>
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Código de Barras *
+                    Nombre del producto *
                   </label>
                   <input
                     type="text"
                     required
-                    value={editingProduct.barcode || ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, barcode: e.target.value })}
-                    className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    value={editingProduct.name || ''}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                    className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Nombre del producto *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editingProduct.name || ''}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-                  className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

@@ -1,6 +1,6 @@
 {
   "name": "AlmacénPro — Gestión de Almacenes",
-  "description": "Sistema integral de administración de almacenes, control de costos e inventario en tiempo real con escaneo de códigos de barras, pedidos autorizados, roles configurables y reportes PDF.",
-  "requestFramePermissions": ["camera"],
+  "description": "Sistema integral de administración de almacenes, control de costos e inventario en tiempo real con búsqueda instantánea, pedidos autorizados, roles configurables y reportes PDF para Centro de salud Pumas Andinos.",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

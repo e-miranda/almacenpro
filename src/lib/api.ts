@@ -37,6 +37,35 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
   return data;
 }
 
+export async function apiDownload(url: string, fallbackFilename: string): Promise<string> {
+  const headers = new Headers();
+  if (memoryToken) {
+    headers.set('Authorization', `Bearer ${memoryToken}`);
+  }
+
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const errData = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ApiError(errData.error || `Error ${res.status}`, res.status);
+  }
+
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] || fallbackFilename;
+
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(blobUrl);
+
+  return filename;
+}
+
 export function formatCurrency(value: number): string {
   const formatted = new Intl.NumberFormat('es-BO', {
     minimumFractionDigits: 2,

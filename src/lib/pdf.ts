@@ -3,7 +3,13 @@ import autoTable from 'jspdf-autotable';
 import type { Movement, ReportSummary } from '../types';
 import { MONTHS_ES, formatCurrency, formatDateTime } from './api';
 
-export function buildExitReportPdf(movement: Movement): jsPDF {
+function normalizeMovements(input: Movement | Movement[]): Movement[] {
+  return Array.isArray(input) ? input : [input];
+}
+
+export function buildExitReportPdf(input: Movement | Movement[]): jsPDF {
+  const items = normalizeMovements(input);
+  const primary = items[0];
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
 
   // Top Header Band
@@ -12,21 +18,21 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('AlmacénPro', 14, 12);
+  doc.setFontSize(14);
+  doc.text('Centro de salud Pumas Andinos', 14, 11);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text('COMPROBANTE OFICIAL DE SALIDA DE MATERIAL', 14, 19);
+  doc.text('AlmacénPro · COMPROBANTE OFICIAL DE SALIDA DE MATERIAL', 14, 18.5);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text(`FOLIO: ${movement.folio}`, 201, 13, { align: 'right' });
+  doc.setFontSize(11.5);
+  doc.text(`FOLIO: ${primary.folio}`, 201, 12, { align: 'right' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.text(`Fecha: ${formatDateTime(movement.created_at)}`, 201, 19.5, { align: 'right' });
+  doc.text(`Fecha: ${formatDateTime(primary.created_at)}`, 201, 18.5, { align: 'right' });
 
-  // Responsible & Destination Box
+  // Responsible & Sector Box
   doc.setTextColor(15, 23, 42);
   doc.setDrawColor(226, 232, 240);
   doc.setFillColor(248, 250, 252);
@@ -35,28 +41,35 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
-  doc.text('RESPONSABLE QUE RETIRA / RECIBE', 19, 42);
-  doc.text('ÁREA / DESTINO', 112, 42);
+  doc.text('PERSONAL RESPONSABLE QUE RETIRA / RECIBE', 19, 42);
+  doc.text('SECTOR / DESTINO', 112, 42);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(15, 23, 42);
-  doc.text(movement.responsible_name || 'No especificado', 19, 48.5);
-  doc.text(movement.responsible_area || 'Operaciones', 112, 48.5);
+  doc.text(primary.responsible_name || 'No especificado', 19, 48.5);
+  doc.text(primary.sector_name || primary.responsible_area || 'Operaciones', 112, 48.5);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
   doc.text('DESPACHADO POR', 19, 57.5);
-  doc.text('TIPO DE MOVIMIENTO', 112, 57.5);
+  doc.text('RESUMEN DEL COMPROBANTE', 112, 57.5);
+
+  const grandTotal = items.reduce((acc, it) => acc + (Number(it.total_value) || 0), 0);
+  const totalUnits = items.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text(movement.operator_name || 'Operador de Almacén', 19, 63.5);
-  doc.text('Salida de Inventario (Descuento Automático)', 112, 63.5);
+  doc.text(primary.operator_name || 'Operador de Almacén', 19, 63.5);
+  doc.text(
+    `${items.length} producto(s) · ${totalUnits} uds. · Total ${formatCurrency(grandTotal)}`,
+    112,
+    63.5
+  );
 
-  // Item Table
+  // Item Table (multi-product)
   autoTable(doc, {
     startY: 76,
     margin: { left: 14, right: 14 },
@@ -67,18 +80,32 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
       fontSize: 9,
     },
     bodyStyles: {
-      fontSize: 9.5,
+      fontSize: 9,
       textColor: [15, 23, 42],
     },
-    head: [['SKU / Código', 'Descripción del Ítem o Material', 'Unidad', 'Cantidad', 'Costo Unit.', 'Valor Total']],
-    body: [
+    footStyles: {
+      fillColor: [241, 245, 249],
+      textColor: [15, 23, 42],
+      fontStyle: 'bold',
+      fontSize: 9.5,
+    },
+    head: [['SKU', 'Descripción del Ítem o Material', 'Unidad', 'Cantidad', 'Costo Unit.', 'Valor Total']],
+    body: items.map((m) => [
+      m.sku,
+      m.product_name,
+      m.unit || 'Pza',
+      String(m.quantity),
+      formatCurrency(m.cost_resulting),
+      formatCurrency(m.total_value),
+    ]),
+    foot: [
       [
-        `${movement.sku}\n${movement.barcode}`,
-        movement.product_name,
-        movement.unit || 'Pza',
-        String(movement.quantity),
-        formatCurrency(movement.cost_resulting),
-        formatCurrency(movement.total_value),
+        '',
+        'TOTAL DE LA SALIDA',
+        '',
+        String(totalUnits),
+        '',
+        formatCurrency(grandTotal),
       ],
     ],
     columnStyles: {
@@ -106,13 +133,13 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
   const splitDetail = doc.splitTextToSize(
-    movement.reason_detail || 'Sin observaciones adicionales.',
+    primary.reason_detail || 'Sin observaciones adicionales.',
     176
   );
   doc.text(splitDetail, 19, afterTableY + 14);
 
   // Signature Lines
-  const sigY = afterTableY + 54;
+  const sigY = Math.min(242, afterTableY + 52);
   doc.setDrawColor(148, 163, 184);
   doc.line(22, sigY, 92, sigY);
   doc.line(124, sigY, 194, sigY);
@@ -120,20 +147,20 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
-  doc.text(movement.responsible_name || 'Responsable', 57, sigY + 5.5, { align: 'center' });
-  doc.text(movement.operator_name || 'Almacén Central', 159, sigY + 5.5, { align: 'center' });
+  doc.text(primary.responsible_name || 'Responsable', 57, sigY + 5.5, { align: 'center' });
+  doc.text(primary.operator_name || 'Almacén Central', 159, sigY + 5.5, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
-  doc.text('Firma de Recibido (Responsable)', 57, sigY + 10, { align: 'center' });
+  doc.text('Firma de Recibido (Personal)', 57, sigY + 10, { align: 'center' });
   doc.text('Firma de Entrega (Almacén)', 159, sigY + 10, { align: 'center' });
 
   // Footer
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
   doc.text(
-    `Documento generado por AlmacénPro · Folio ${movement.folio}`,
+    `Centro de salud Pumas Andinos · AlmacénPro · Folio ${primary.folio}`,
     107.9,
     265,
     { align: 'center' }
@@ -142,20 +169,26 @@ export function buildExitReportPdf(movement: Movement): jsPDF {
   return doc;
 }
 
-export function downloadExitPdf(movement: Movement): void {
-  const doc = buildExitReportPdf(movement);
-  doc.save(`Reporte_Salida_${movement.folio}.pdf`);
+export function downloadExitPdf(input: Movement | Movement[]): void {
+  const items = normalizeMovements(input);
+  const doc = buildExitReportPdf(items);
+  doc.save(`Reporte_Salida_${items[0].folio}.pdf`);
 }
 
 export async function shareExitPdfMobile(
-  movement: Movement
+  input: Movement | Movement[]
 ): Promise<{ shared: boolean; message: string }> {
-  const doc = buildExitReportPdf(movement);
+  const items = normalizeMovements(input);
+  const primary = items[0];
+  const doc = buildExitReportPdf(items);
   const blob = doc.output('blob');
-  const fileName = `Reporte_Salida_${movement.folio}.pdf`;
+  const fileName = `Reporte_Salida_${primary.folio}.pdf`;
   const file = new File([blob], fileName, { type: 'application/pdf' });
 
-  const summaryText = `Salida ${movement.folio}: ${movement.quantity} ${movement.unit} de ${movement.product_name}. Responsable: ${movement.responsible_name} (${movement.responsible_area}). Detalle: ${movement.reason_detail}`;
+  const itemsText = items
+    .map((m) => `${m.quantity} ${m.unit} de ${m.product_name}`)
+    .join(', ');
+  const summaryText = `Salida ${primary.folio}: ${itemsText}. Responsable: ${primary.responsible_name} (${primary.sector_name || primary.responsible_area}). Detalle: ${primary.reason_detail}`;
 
   if (typeof navigator !== 'undefined' && 'share' in navigator) {
     try {
@@ -163,14 +196,14 @@ export async function shareExitPdfMobile(
         typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
       if (canShareFiles) {
         await navigator.share({
-          title: `Reporte de Salida ${movement.folio}`,
+          title: `Reporte de Salida ${primary.folio}`,
           text: summaryText,
           files: [file],
         });
         return { shared: true, message: 'PDF compartido desde la plataforma móvil.' };
       }
       await navigator.share({
-        title: `Reporte de Salida ${movement.folio}`,
+        title: `Reporte de Salida ${primary.folio}`,
         text: summaryText,
       });
       doc.save(fileName);
@@ -192,26 +225,40 @@ export async function shareExitPdfMobile(
   };
 }
 
-export function buildExitSummaryText(movement: Movement): string {
-  return [
-    `REPORTE DE SALIDA DE ALMACÉN — ${movement.folio}`,
-    `Fecha: ${formatDateTime(movement.created_at)}`,
-    `Producto: ${movement.product_name} (SKU: ${movement.sku} | Código: ${movement.barcode})`,
-    `Cantidad: ${movement.quantity} ${movement.unit}`,
-    `Costo Unitario: ${formatCurrency(movement.cost_resulting)} | Total: ${formatCurrency(movement.total_value)}`,
-    `Responsable: ${movement.responsible_name} (${movement.responsible_area})`,
-    `Despachado por: ${movement.operator_name || 'Almacén Central'}`,
-    `Detalle: ${movement.reason_detail}`,
-  ].join('\n');
+export function buildExitSummaryText(input: Movement | Movement[]): string {
+  const items = normalizeMovements(input);
+  const primary = items[0];
+  const grandTotal = items.reduce((acc, it) => acc + (Number(it.total_value) || 0), 0);
+
+  const lines = [
+    `CENTRO DE SALUD PUMAS ANDINOS — REPORTE DE SALIDA DE ALMACÉN — ${primary.folio}`,
+    `Fecha: ${formatDateTime(primary.created_at)}`,
+    `Personal Responsable: ${primary.responsible_name} (Sector: ${primary.sector_name || primary.responsible_area})`,
+    `Despachado por: ${primary.operator_name || 'Almacén Central'}`,
+    '',
+    'PRODUCTOS ENTREGADOS:',
+    ...items.map(
+      (m, i) =>
+        `${i + 1}. ${m.product_name} (SKU: ${m.sku}) — ${m.quantity} ${m.unit} · Unit: ${formatCurrency(m.cost_resulting)} · Subtotal: ${formatCurrency(m.total_value)}`
+    ),
+    '',
+    `Valor Total de Salida: ${formatCurrency(grandTotal)}`,
+    `Detalle: ${primary.reason_detail}`,
+  ];
+  return lines.join('\n');
 }
 
-export function exportExitByEmail(movement: Movement, recipientEmail = ''): void {
-  downloadExitPdf(movement);
+export function exportExitByEmail(input: Movement | Movement[], recipientEmail = ''): void {
+  const items = normalizeMovements(input);
+  const primary = items[0];
+  downloadExitPdf(items);
   const subject = encodeURIComponent(
-    `Reporte de Salida ${movement.folio} — ${movement.product_name}`
+    items.length > 1
+      ? `Reporte de Salida ${primary.folio} — ${items.length} productos`
+      : `Reporte de Salida ${primary.folio} — ${primary.product_name}`
   );
   const body = encodeURIComponent(
-    `${buildExitSummaryText(movement)}\n\nNota: Se descargó el archivo Reporte_Salida_${movement.folio}.pdf para adjuntarlo a este correo.`
+    `${buildExitSummaryText(items)}\n\nNota: Se descargó el archivo Reporte_Salida_${primary.folio}.pdf para adjuntarlo a este correo.`
   );
   const mailto = `mailto:${encodeURIComponent(recipientEmail)}?subject=${subject}&body=${body}`;
   const link = document.createElement('a');
@@ -239,14 +286,19 @@ export function downloadPeriodReportPdf(summary: ReportSummary): void {
     .join(' · ');
 
   doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, 215.9, 26, 'F');
+  doc.rect(0, 0, 215.9, 28, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.text('AlmacénPro', 14, 11);
+  doc.setFontSize(14);
+  doc.text('Centro de salud Pumas Andinos', 14, 11);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
-  doc.text(filterSubtitle ? `${periodTitle} (${filterSubtitle})` : periodTitle, 14, 18.5);
+  doc.text(
+    filterSubtitle ? `Reporte Principal · ${periodTitle} (${filterSubtitle})` : `Reporte Principal · ${periodTitle}`,
+    14,
+    19
+  );
+  doc.setFontSize(8.5);
   doc.text(`Generado: ${new Date().toLocaleDateString('es-BO')}`, 201, 15, { align: 'right' });
 
   // KPI summary row
@@ -364,5 +416,168 @@ export function downloadPeriodReportPdf(summary: ReportSummary): void {
     });
   }
 
-  doc.save(`AlmacenPro_${summary.mode === 'annual' ? `Anual_${summary.year}` : `Mensual_${summary.year}-${summary.month}`}.pdf`);
+  doc.save(
+    `Centro_Salud_Pumas_Andinos_${summary.mode === 'annual' ? `Anual_${summary.year}` : `Mensual_${summary.year}-${summary.month}`}.pdf`
+  );
 }
+
+function getReportHeaderSubtitle(summary: ReportSummary, titlePrefix: string): string {
+  const monthLabel = MONTHS_ES.find((m) => m.value === summary.month)?.label || summary.month;
+  const periodTitle =
+    summary.mode === 'annual' ? `Año ${summary.year}` : `${monthLabel} ${summary.year}`;
+  const selectedUserName = summary.user_id
+    ? summary.filterUsers.find((u) => u.id === summary.user_id)?.name
+    : null;
+  const selectedCatName = summary.category_id
+    ? summary.filterCategories.find((c) => c.id === summary.category_id)?.name
+    : null;
+  const filterSubtitle = [
+    selectedUserName ? `Usuario: ${selectedUserName}` : null,
+    selectedCatName ? `Categoría: ${selectedCatName}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return filterSubtitle
+    ? `${titlePrefix} · ${periodTitle} (${filterSubtitle})`
+    : `${titlePrefix} · ${periodTitle}`;
+}
+
+export function downloadIncomeReportPdf(summary: ReportSummary): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const items =
+    summary.ingresoDetails ?? summary.movementDetails.filter((m) => m.type === 'INGRESO');
+
+  doc.setFillColor(6, 78, 59);
+  doc.rect(0, 0, 215.9, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Centro de salud Pumas Andinos', 14, 11);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.text(getReportHeaderSubtitle(summary, 'Reporte de Ingresos de Almacén'), 14, 19);
+  doc.setFontSize(8.5);
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-BO')}`, 201, 15, { align: 'right' });
+
+  autoTable(doc, {
+    startY: 33,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [6, 95, 70], textColor: 255, fontSize: 8.5 },
+    bodyStyles: { fontSize: 9, fontStyle: 'bold' },
+    head: [['Registros de Ingreso', 'Unidades Ingresadas', 'Valor Total Ingresado', 'Promedio por Ingreso']],
+    body: [
+      [
+        String(summary.totals.ingreso_count),
+        `${summary.totals.ingreso_units} uds.`,
+        formatCurrency(summary.totals.ingreso_value),
+        formatCurrency(
+          summary.totals.ingreso_count > 0
+            ? summary.totals.ingreso_value / summary.totals.ingreso_count
+            : 0
+        ),
+      ],
+    ],
+  });
+
+  const yTable = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text(`Detalle de Ingresos (${items.length})`, 14, yTable);
+
+  autoTable(doc, {
+    startY: yTable + 2.5,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 7.5 },
+    bodyStyles: { fontSize: 7.5 },
+    head: [['Folio', 'Fecha', 'SKU', 'Producto', 'Cant.', 'Costo Unit.', 'Operador / Detalle', 'Total (Bs.)']],
+    body:
+      items.length === 0
+        ? [['—', '—', '—', 'Sin ingresos registrados en este período', '0', 'Bs 0.00', '—', 'Bs 0.00']]
+        : items.map((m) => [
+            m.folio,
+            formatDateTime(m.created_at),
+            m.sku,
+            m.product_name,
+            `${m.quantity} ${m.unit}`,
+            formatCurrency(m.cost_resulting),
+            `${m.operator_name || 'Sistema'} · ${m.reason_detail || 'Ingreso'}`,
+            formatCurrency(m.total_value),
+          ]),
+  });
+
+  doc.save(
+    `Pumas_Andinos_Ingresos_${summary.mode === 'annual' ? summary.year : `${summary.year}-${summary.month}`}.pdf`
+  );
+}
+
+export function downloadExpensesReportPdf(summary: ReportSummary): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const items =
+    summary.egresoDetails ?? summary.movementDetails.filter((m) => m.type === 'SALIDA');
+
+  doc.setFillColor(120, 53, 15);
+  doc.rect(0, 0, 215.9, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Centro de salud Pumas Andinos', 14, 11);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.text(getReportHeaderSubtitle(summary, 'Reporte de Egresos (Salidas) de Almacén'), 14, 19);
+  doc.setFontSize(8.5);
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-BO')}`, 201, 15, { align: 'right' });
+
+  autoTable(doc, {
+    startY: 33,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [146, 64, 14], textColor: 255, fontSize: 8.5 },
+    bodyStyles: { fontSize: 9, fontStyle: 'bold' },
+    head: [['Registros de Egreso', 'Unidades Despachadas', 'Valor Total Egresado', 'Promedio por Salida']],
+    body: [
+      [
+        String(summary.totals.salida_count),
+        `${summary.totals.salida_units} uds.`,
+        formatCurrency(summary.totals.salida_value),
+        formatCurrency(
+          summary.totals.salida_count > 0
+            ? summary.totals.salida_value / summary.totals.salida_count
+            : 0
+        ),
+      ],
+    ],
+  });
+
+  const yTable = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 7;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text(`Detalle de Egresos / Salidas (${items.length})`, 14, yTable);
+
+  autoTable(doc, {
+    startY: yTable + 2.5,
+    margin: { left: 14, right: 14 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontSize: 7.5 },
+    bodyStyles: { fontSize: 7.5 },
+    head: [['Folio', 'Fecha', 'SKU', 'Producto', 'Cant.', 'Responsable / Sector', 'Motivo', 'Total (Bs.)']],
+    body:
+      items.length === 0
+        ? [['—', '—', '—', 'Sin egresos registrados en este período', '0', '—', '—', 'Bs 0.00']]
+        : items.map((m) => [
+            m.folio,
+            formatDateTime(m.created_at),
+            m.sku,
+            m.product_name,
+            `${m.quantity} ${m.unit}`,
+            `${m.responsible_name || 'No especificado'} (${m.sector_name || m.responsible_area})`,
+            m.reason_detail || 'Salida',
+            formatCurrency(m.total_value),
+          ]),
+  });
+
+  doc.save(
+    `Pumas_Andinos_Egresos_${summary.mode === 'annual' ? summary.year : `${summary.year}-${summary.month}`}.pdf`
+  );
+}
+

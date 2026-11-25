@@ -1,24 +1,26 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   ClipboardCheck,
   Clock,
   FileText,
+  MapPin,
   PackageCheck,
   Plus,
   Send,
   Trash2,
+  Users,
   XCircle,
 } from 'lucide-react';
-import { apiFetch, formatDateTime } from '../lib/api';
-import type { AuthUser, Movement, Product, WarehouseOrder } from '../types';
+import { apiFetch, formatCurrency, formatDateTime } from '../lib/api';
+import type { AuthUser, Movement, Personnel, Product, Sector, WarehouseOrder } from '../types';
 
 interface OrdersViewProps {
   user: AuthUser;
   products: Product[];
   preselectedProduct: Product | null;
   onClearPreselected: () => void;
-  onDispatchedExit: (movement: Movement) => void;
+  onDispatchedExit: (movement: Movement, items?: Movement[]) => void;
   onStockChanged: () => void;
 }
 
@@ -31,10 +33,14 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onStockChanged,
 }) => {
   const [orders, setOrders] = useState<WarehouseOrder[]>([]);
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'ALL' | WarehouseOrder['status']>('ALL');
   const [showForm, setShowForm] = useState(Boolean(preselectedProduct));
 
+  const [selectedPersonnelId, setSelectedPersonnelId] = useState<number>(0);
+  const [selectedSectorId, setSelectedSectorId] = useState<number>(user.sector_id || 0);
   const [department, setDepartment] = useState(user.department || 'Operaciones');
   const [priority, setPriority] = useState<'Normal' | 'Urgente'>('Normal');
   const [notes, setNotes] = useState('');
@@ -48,6 +54,39 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
+
+  const activeSectors = useMemo(() => sectors.filter((s) => s.active === 1), [sectors]);
+  const activePersonnel = useMemo(() => personnelList.filter((p) => p.active === 1), [personnelList]);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch<{ sectors: Sector[] }>('/api/sectors'),
+      apiFetch<{ personnel: Personnel[] }>('/api/personnel'),
+    ])
+      .then(([secRes, perRes]) => {
+        setSectors(secRes.sectors);
+        setPersonnelList(perRes.personnel);
+        if (!selectedSectorId && secRes.sectors.length > 0) {
+          const match = secRes.sectors.find(
+            (s) => s.name.toLowerCase() === (user.department || '').toLowerCase()
+          );
+          const chosen = match || secRes.sectors.find((s) => s.active === 1) || secRes.sectors[0];
+          if (chosen) {
+            setSelectedSectorId(chosen.id);
+            setDepartment(chosen.name);
+          }
+        }
+      })
+      .catch(() => {
+        // non-blocking
+      });
+  }, [selectedSectorId, user.department]);
+
+  useEffect(() => {
+    if (products.length > 0 && draftItems.length === 0) {
+      setDraftItems([{ product_id: products[0].id, quantity: 1 }]);
+    }
+  }, [products, draftItems.length]);
 
   useEffect(() => {
     if (preselectedProduct) {
@@ -73,10 +112,40 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     loadOrders();
   }, [loadOrders]);
 
+  const handlePersonnelChange = (pid: number) => {
+    setSelectedPersonnelId(pid);
+    if (pid > 0) {
+      const person = personnelList.find((p) => p.id === pid);
+      if (person) {
+        setSelectedSectorId(person.sector_id);
+        setDepartment(person.sector_name);
+      }
+    }
+  };
+
+  const handleSectorChange = (sid: number) => {
+    setSelectedSectorId(sid);
+    const sec = sectors.find((s) => s.id === sid);
+    if (sec) setDepartment(sec.name);
+  };
+
   const addDraftLine = () => {
     if (products.length === 0) return;
-    setDraftItems((prev) => [...prev, { product_id: products[0].id, quantity: 1 }]);
+    const usedIds = new Set(draftItems.map((d) => d.product_id));
+    const nextProd = products.find((p) => !usedIds.has(p.id)) || products[0];
+    setDraftItems((prev) => [...prev, { product_id: nextProd.id, quantity: 1 }]);
   };
+
+  const draftSummary = useMemo(() => {
+    let totalUnits = 0;
+    let estimatedTotal = 0;
+    for (const line of draftItems) {
+      totalUnits += Number(line.quantity) || 0;
+      const prod = products.find((p) => p.id === line.product_id);
+      if (prod) estimatedTotal += (Number(line.quantity) || 0) * prod.cost_current;
+    }
+    return { totalUnits, estimatedTotal };
+  }, [draftItems, products]);
 
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,17 +153,22 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     setFeedback('');
     setSubmitting(true);
     try {
+      const selectedPerson = personnelList.find((p) => p.id === selectedPersonnelId);
       const res = await apiFetch<{ folio: string }>('/api/orders', {
         method: 'POST',
         body: JSON.stringify({
+          personnel_id: selectedPersonnelId > 0 ? selectedPersonnelId : null,
+          sector_id: selectedSectorId > 0 ? selectedSectorId : null,
+          requester_name: selectedPerson ? selectedPerson.name : user.name,
           department,
           priority,
           notes,
           items: draftItems,
         }),
       });
-      setFeedback(`Pedido ${res.folio} enviado para autorización.`);
+      setFeedback(`Pedido ${res.folio} enviado con ${draftItems.length} producto(s) para autorización.`);
       setNotes('');
+      setDraftItems(products[0] ? [{ product_id: products[0].id, quantity: 1 }] : []);
       setShowForm(false);
       loadOrders();
     } catch (err) {
@@ -131,13 +205,13 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     try {
       const res = await apiFetch<{ movements: Movement[] }>(`/api/orders/${order.id}/dispatch`, {
         method: 'POST',
-        body: JSON.stringify({ responsible_name: order.requester_name }),
+        body: JSON.stringify({ responsible_name: order.personnel_name || order.requester_name }),
       });
       setFeedback(`Pedido ${order.folio} despachado y stock descontado automáticamente.`);
       onStockChanged();
       loadOrders();
       if (res.movements && res.movements[0]) {
-        onDispatchedExit(res.movements[0]);
+        onDispatchedExit(res.movements[0], res.movements);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo despachar el pedido.');
@@ -181,10 +255,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100">
-            Pedidos y Autorizaciones
+            Solicitudes de Pedido y Autorizaciones
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Solicita materiales al almacén, autoriza salidas y despacha con reporte PDF automático
+            Agrega varios productos en una misma solicitud asignada al personal y sector correspondiente
           </p>
         </div>
         {user.permissions.request_order && (
@@ -194,7 +268,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             className="min-h-[44px] px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium flex items-center gap-2 self-start sm:self-auto whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            <span>{showForm ? 'Cerrar Formulario' : 'Solicitar Pedido'}</span>
+            <span>{showForm ? 'Cerrar Formulario' : 'Nueva Solicitud'}</span>
           </button>
         )}
       </div>
@@ -204,23 +278,55 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           onSubmit={handleSubmitOrder}
           className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 space-y-4"
         >
-          <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100 border-b border-slate-100 dark:border-slate-800 pb-3">
-            Nueva Solicitud de Pedido / Salida de Almacén
-          </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              Nueva Solicitud Multi-Producto
+            </h3>
+            <span className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+              {draftItems.length} línea(s) · {draftSummary.totalUnits} uds. · Est.{' '}
+              <strong>{formatCurrency(draftSummary.estimatedTotal)}</strong>
+            </span>
+          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Área / Departamento
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                <Users className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                Personal solicitante / Responsable
               </label>
-              <input
-                type="text"
-                required
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
+              <select
+                value={selectedPersonnelId}
+                onChange={(e) => handlePersonnelChange(Number(e.target.value))}
                 className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
+              >
+                <option value={0}>Usuario actual ({user.name})</option>
+                {activePersonnel.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.position} ({p.sector_name})
+                  </option>
+                ))}
+              </select>
             </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                Sector de destino *
+              </label>
+              <select
+                value={selectedSectorId}
+                onChange={(e) => handleSectorChange(Number(e.target.value))}
+                className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+              >
+                {activeSectors.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    [{s.code}] {s.name}
+                  </option>
+                ))}
+                <option value={0}>Otro sector ({department})</option>
+              </select>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                 Prioridad
@@ -234,76 +340,75 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 <option value="Urgente">Urgente</option>
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Solicitante
-              </label>
-              <input
-                type="text"
-                disabled
-                value={user.name}
-                className="w-full min-h-[42px] px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300"
-              />
-            </div>
           </div>
 
-          <div className="space-y-2.5">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-4 space-y-2.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                Ítems solicitados *
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Productos solicitados *
               </label>
               <button
                 type="button"
                 onClick={addDraftLine}
-                className="text-xs font-medium text-blue-700 dark:text-blue-400 hover:text-blue-800 flex items-center gap-1"
+                className="min-h-[34px] px-3 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1"
               >
-                <Plus className="w-3.5 h-3.5" /> Agregar otro ítem
+                <Plus className="w-3.5 h-3.5" /> Agregar otro producto
               </button>
             </div>
 
-            {draftItems.map((line, idx) => (
-              <div key={idx} className="flex flex-col sm:flex-row gap-2">
-                <select
-                  value={line.product_id}
-                  onChange={(e) => {
-                    const next = [...draftItems];
-                    next[idx].product_id = Number(e.target.value);
-                    setDraftItems(next);
-                  }}
-                  className="flex-1 min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+            {draftItems.map((line, idx) => {
+              const prod = products.find((p) => p.id === line.product_id);
+              const lineSubtotal = prod ? line.quantity * prod.cost_current : 0;
+              return (
+                <div
+                  key={idx}
+                  className="flex flex-col sm:flex-row sm:items-center gap-2 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800"
                 >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      [{p.sku}] {p.name} (Disponible: {p.stock_current} {p.unit})
-                    </option>
-                  ))}
-                </select>
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    required
-                    value={line.quantity}
+                  <select
+                    value={line.product_id}
                     onChange={(e) => {
                       const next = [...draftItems];
-                      next[idx].quantity = Math.max(1, Number(e.target.value));
+                      next[idx].product_id = Number(e.target.value);
                       setDraftItems(next);
                     }}
-                    className="w-28 min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                  />
-                  {draftItems.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => setDraftItems((prev) => prev.filter((_, i) => i !== idx))}
-                      className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-400"
-                      aria-label="Eliminar línea"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+                    className="flex-1 min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                  >
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        [{p.sku}] {p.name} (Disp: {p.stock_current} {p.unit} · {formatCurrency(p.cost_current)})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="number"
+                      min={1}
+                      required
+                      value={line.quantity}
+                      onChange={(e) => {
+                        const next = [...draftItems];
+                        next[idx].quantity = Math.max(1, Number(e.target.value));
+                        setDraftItems(next);
+                      }}
+                      className="w-24 min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                    <span className="w-24 text-right text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                      {formatCurrency(lineSubtotal)}
+                    </span>
+                    {draftItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setDraftItems((prev) => prev.filter((_, i) => i !== idx))}
+                        className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-700 dark:hover:text-red-400"
+                        aria-label="Eliminar línea"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div>
@@ -330,8 +435,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </button>
             <button
               type="submit"
-              disabled={submitting}
-              className="min-h-[44px] px-5 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold flex items-center gap-2"
+              disabled={submitting || draftItems.length === 0}
+              className="min-h-[44px] px-5 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-2"
             >
               <Send className="w-4 h-4" />
               <span>{submitting ? 'Enviando...' : 'Enviar Solicitud'}</span>
@@ -397,7 +502,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     </span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-1">
-                    Solicita: {order.requester_name} · {order.department}
+                    Personal: {order.personnel_name || order.requester_name} · Sector:{' '}
+                    {order.sector_name || order.department}
                   </p>
                 </div>
                 <div>{renderStatusLabel(order.status)}</div>

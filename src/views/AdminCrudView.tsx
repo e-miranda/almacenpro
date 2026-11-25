@@ -6,28 +6,42 @@ import {
   Check,
   ClipboardList,
   Database,
+  Download,
   Edit3,
+  FileCode2,
   FolderTree,
+  MapPin,
   Plus,
   Search,
   Shield,
   Trash2,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
-import { apiFetch, formatCurrency } from '../lib/api';
+import { apiDownload, apiFetch, formatCurrency } from '../lib/api';
 import type {
   AuthUser,
   Category,
   Movement,
   PermissionCatalogItem,
+  Personnel,
   Product,
   RoleConfig,
+  Sector,
   SystemUser,
   WarehouseOrder,
 } from '../types';
 
-type CrudTableKey = 'categories' | 'products' | 'users' | 'roles' | 'orders' | 'movements';
+type CrudTableKey =
+  | 'sectors'
+  | 'personnel'
+  | 'categories'
+  | 'products'
+  | 'users'
+  | 'roles'
+  | 'orders'
+  | 'movements';
 
 interface AdminCrudViewProps {
   user: AuthUser;
@@ -35,13 +49,15 @@ interface AdminCrudViewProps {
 }
 
 export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChanged }) => {
-  const [activeTable, setActiveTable] = useState<CrudTableKey>('categories');
+  const [activeTable, setActiveTable] = useState<CrudTableKey>('sectors');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
 
   // All table datasets
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<SystemUser[]>([]);
@@ -54,6 +70,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<'sql' | 'json' | null>(null);
 
   // Delete confirm modal
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -65,6 +82,33 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
   const [deleting, setDeleting] = useState(false);
 
   // Form states per table
+  const [sectorForm, setSectorForm] = useState<{
+    id?: number;
+    code: string;
+    name: string;
+    description: string;
+    active: boolean;
+  }>({ code: '', name: '', description: '', active: true });
+
+  const [personnelForm, setPersonnelForm] = useState<{
+    id?: number;
+    code: string;
+    name: string;
+    position: string;
+    email: string;
+    phone: string;
+    sector_id: number;
+    active: boolean;
+  }>({
+    code: '',
+    name: '',
+    position: 'Operador',
+    email: '',
+    phone: '',
+    sector_id: 0,
+    active: true,
+  });
+
   const [catForm, setCatForm] = useState<{
     id?: number;
     code: string;
@@ -105,16 +149,20 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
   const [userForm, setUserForm] = useState<{
     id?: number;
     name: string;
+    username: string;
     email: string;
     password: string;
     role_id: number;
+    sector_id: number;
     department: string;
     active: boolean;
   }>({
     name: '',
+    username: '',
     email: '',
     password: '',
     role_id: 0,
+    sector_id: 0,
     department: 'Operaciones',
     active: true,
   });
@@ -136,21 +184,23 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
 
   const [orderForm, setOrderForm] = useState<{
     id?: number;
+    personnel_id: number;
+    sector_id: number;
     department: string;
     priority: 'Normal' | 'Urgente';
     status: 'Pendiente' | 'Aprobado' | 'Rechazado' | 'Despachado';
     notes: string;
     review_notes: string;
-    product_id: number;
-    quantity: number;
+    items: Array<{ product_id: number; quantity: number }>;
   }>({
+    personnel_id: 0,
+    sector_id: 0,
     department: 'Operaciones',
     priority: 'Normal',
     status: 'Pendiente',
     notes: '',
     review_notes: '',
-    product_id: 0,
-    quantity: 1,
+    items: [],
   });
 
   const [movForm, setMovForm] = useState<{
@@ -160,6 +210,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     product_id: number;
     quantity: number;
     cost_entry: number;
+    items: Array<{ product_id: number; quantity: number }>;
+    personnel_id: number;
+    sector_id: number;
     responsible_name: string;
     responsible_area: string;
     reason_detail: string;
@@ -169,6 +222,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     product_id: 0,
     quantity: 1,
     cost_entry: 0,
+    items: [],
+    personnel_id: 0,
+    sector_id: 0,
     responsible_name: '',
     responsible_area: '',
     reason_detail: '',
@@ -178,7 +234,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     setLoading(true);
     setError('');
     try {
-      const [catRes, prodRes, userRes, roleRes, ordRes, movRes] = await Promise.all([
+      const [secRes, perRes, catRes, prodRes, userRes, roleRes, ordRes, movRes] = await Promise.all([
+        apiFetch<{ sectors: Sector[] }>('/api/sectors'),
+        apiFetch<{ personnel: Personnel[] }>('/api/personnel'),
         apiFetch<{ categories: Category[] }>('/api/categories'),
         apiFetch<{ products: Product[] }>('/api/products'),
         apiFetch<{ users: SystemUser[] }>('/api/users'),
@@ -186,6 +244,8 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
         apiFetch<{ orders: WarehouseOrder[] }>('/api/orders'),
         apiFetch<{ movements: Movement[] }>('/api/movements'),
       ]);
+      setSectors(secRes.sectors);
+      setPersonnelList(perRes.personnel);
       setCategories(catRes.categories);
       setProducts(prodRes.products);
       setUsers(userRes.users);
@@ -210,6 +270,8 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     count: number;
     icon: React.ComponentType<{ className?: string }>;
   }> = [
+    { key: 'sectors', label: 'Sectores', count: sectors.length, icon: MapPin },
+    { key: 'personnel', label: 'Personal', count: personnelList.length, icon: UserCheck },
     { key: 'categories', label: 'Categorías', count: categories.length, icon: FolderTree },
     { key: 'products', label: 'Productos', count: products.length, icon: Boxes },
     { key: 'users', label: 'Usuarios', count: users.length, icon: Users },
@@ -219,6 +281,31 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
   ];
 
   const q = search.trim().toLowerCase();
+
+  const filteredSectors = useMemo(
+    () =>
+      sectors.filter(
+        (s) =>
+          !q ||
+          s.name.toLowerCase().includes(q) ||
+          s.code.toLowerCase().includes(q) ||
+          s.description.toLowerCase().includes(q)
+      ),
+    [sectors, q]
+  );
+
+  const filteredPersonnel = useMemo(
+    () =>
+      personnelList.filter(
+        (p) =>
+          !q ||
+          p.name.toLowerCase().includes(q) ||
+          p.code.toLowerCase().includes(q) ||
+          p.position.toLowerCase().includes(q) ||
+          p.sector_name.toLowerCase().includes(q)
+      ),
+    [personnelList, q]
+  );
 
   const filteredCategories = useMemo(
     () =>
@@ -239,7 +326,6 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
           !q ||
           p.name.toLowerCase().includes(q) ||
           p.sku.toLowerCase().includes(q) ||
-          p.barcode.toLowerCase().includes(q) ||
           p.category.toLowerCase().includes(q)
       ),
     [products, q]
@@ -251,6 +337,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
         (u) =>
           !q ||
           u.name.toLowerCase().includes(q) ||
+          (u.username || '').toLowerCase().includes(q) ||
           u.email.toLowerCase().includes(q) ||
           u.role_name.toLowerCase().includes(q) ||
           u.department.toLowerCase().includes(q)
@@ -299,12 +386,24 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
   const openCreateModal = () => {
     setFormError('');
     setFeedback('');
-    if (activeTable === 'categories') {
+    if (activeTable === 'sectors') {
+      setSectorForm({ code: '', name: '', description: '', active: true });
+    } else if (activeTable === 'personnel') {
+      setPersonnelForm({
+        code: '',
+        name: '',
+        position: 'Técnico / Operador',
+        email: '',
+        phone: '',
+        sector_id: sectors[0]?.id || 0,
+        active: true,
+      });
+    } else if (activeTable === 'categories') {
       setCatForm({ code: '', name: '', description: '', active: true });
     } else if (activeTable === 'products') {
       setProdForm({
         sku: '',
-        barcode: `7501000${Math.floor(100000 + Math.random() * 899999)}`,
+        barcode: '',
         name: '',
         description: '',
         category_id: categories[0]?.id || 0,
@@ -319,10 +418,12 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     } else if (activeTable === 'users') {
       setUserForm({
         name: '',
+        username: '',
         email: '',
         password: '',
         role_id: roles[1]?.id || roles[0]?.id || 0,
-        department: 'Operaciones',
+        sector_id: sectors[0]?.id || 0,
+        department: sectors[0]?.name || 'Operaciones',
         active: true,
       });
     } else if (activeTable === 'roles') {
@@ -333,28 +434,60 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
       setRoleForm({ slug: '', name: '', description: '', is_system: 0, permissions: defaults });
     } else if (activeTable === 'orders') {
       setOrderForm({
-        department: user.department || 'Operaciones',
+        personnel_id: personnelList[0]?.id || 0,
+        sector_id: personnelList[0]?.sector_id || sectors[0]?.id || 0,
+        department: personnelList[0]?.sector_name || sectors[0]?.name || 'Operaciones',
         priority: 'Normal',
         status: 'Pendiente',
         notes: '',
         review_notes: '',
-        product_id: products[0]?.id || 0,
-        quantity: 1,
+        items: products[0] ? [{ product_id: products[0].id, quantity: 1 }] : [],
       });
     } else if (activeTable === 'movements') {
       const firstProd = products[0];
+      const firstPer = personnelList[0];
       setMovForm({
         folio: '',
         type: 'INGRESO',
         product_id: firstProd?.id || 0,
         quantity: 1,
         cost_entry: firstProd?.cost_current ?? 0,
-        responsible_name: user.name,
-        responsible_area: user.department || 'Almacén',
+        items: firstProd ? [{ product_id: firstProd.id, quantity: 1 }] : [],
+        personnel_id: firstPer?.id || 0,
+        sector_id: firstPer?.sector_id || sectors[0]?.id || 0,
+        responsible_name: firstPer?.name || user.name,
+        responsible_area: firstPer?.sector_name || sectors[0]?.name || 'Almacén',
         reason_detail: '',
       });
     }
     setModalMode('create');
+  };
+
+  const openEditSector = (s: Sector) => {
+    setFormError('');
+    setSectorForm({
+      id: s.id,
+      code: s.code,
+      name: s.name,
+      description: s.description,
+      active: s.active === 1,
+    });
+    setModalMode('edit');
+  };
+
+  const openEditPersonnel = (p: Personnel) => {
+    setFormError('');
+    setPersonnelForm({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      position: p.position,
+      email: p.email,
+      phone: p.phone,
+      sector_id: p.sector_id,
+      active: p.active === 1,
+    });
+    setModalMode('edit');
   };
 
   const openEditCategory = (c: Category) => {
@@ -399,9 +532,11 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     setUserForm({
       id: u.id,
       name: u.name,
+      username: u.username || '',
       email: u.email,
       password: '',
       role_id: u.role_id,
+      sector_id: u.sector_id || 0,
       department: u.department,
       active: u.active === 1,
     });
@@ -425,13 +560,17 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     setFormError('');
     setOrderForm({
       id: o.id,
+      personnel_id: o.personnel_id || 0,
+      sector_id: o.sector_id || 0,
       department: o.department,
       priority: o.priority,
       status: o.status,
       notes: o.notes || '',
       review_notes: o.review_notes || '',
-      product_id: o.items[0]?.product_id || products[0]?.id || 0,
-      quantity: o.items[0]?.quantity_requested || 1,
+      items: o.items.map((it) => ({
+        product_id: it.product_id,
+        quantity: it.quantity_requested,
+      })),
     });
     setModalMode('edit');
   };
@@ -445,6 +584,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
       product_id: m.product_id,
       quantity: m.quantity,
       cost_entry: m.cost_entry,
+      items: [{ product_id: m.product_id, quantity: m.quantity }],
+      personnel_id: m.personnel_id || 0,
+      sector_id: m.sector_id || 0,
       responsible_name: m.responsible_name,
       responsible_area: m.responsible_area,
       reason_detail: m.reason_detail,
@@ -458,7 +600,41 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     setFeedback('');
     setSaving(true);
     try {
-      if (activeTable === 'categories') {
+      if (activeTable === 'sectors') {
+        const body = {
+          code: sectorForm.code,
+          name: sectorForm.name,
+          description: sectorForm.description,
+          active: sectorForm.active ? 1 : 0,
+        };
+        if (modalMode === 'edit' && sectorForm.id) {
+          await apiFetch(`/api/sectors/${sectorForm.id}`, { method: 'PUT', body: JSON.stringify(body) });
+          setFeedback('Sector actualizado correctamente.');
+        } else {
+          await apiFetch('/api/sectors', { method: 'POST', body: JSON.stringify(body) });
+          setFeedback('Sector creado correctamente.');
+        }
+      } else if (activeTable === 'personnel') {
+        const body = {
+          code: personnelForm.code,
+          name: personnelForm.name,
+          position: personnelForm.position,
+          email: personnelForm.email,
+          phone: personnelForm.phone,
+          sector_id: personnelForm.sector_id,
+          active: personnelForm.active ? 1 : 0,
+        };
+        if (modalMode === 'edit' && personnelForm.id) {
+          await apiFetch(`/api/personnel/${personnelForm.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+          });
+          setFeedback('Personal actualizado correctamente.');
+        } else {
+          await apiFetch('/api/personnel', { method: 'POST', body: JSON.stringify(body) });
+          setFeedback('Personal registrado correctamente.');
+        }
+      } else if (activeTable === 'categories') {
         const body = {
           code: catForm.code,
           name: catForm.name,
@@ -488,18 +664,22 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
       } else if (activeTable === 'users') {
         const body: Record<string, unknown> = {
           name: userForm.name,
+          username: userForm.username,
           email: userForm.email,
           role_id: userForm.role_id,
+          sector_id: userForm.sector_id > 0 ? userForm.sector_id : null,
           department: userForm.department,
           active: userForm.active ? 1 : 0,
         };
-        if (userForm.password.trim()) body.password = userForm.password;
+        if (userForm.password.trim()) {
+          body.password = userForm.password;
+        }
         if (modalMode === 'edit' && userForm.id) {
           await apiFetch(`/api/users/${userForm.id}`, { method: 'PUT', body: JSON.stringify(body) });
           setFeedback('Usuario actualizado correctamente.');
         } else {
           await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(body) });
-          setFeedback('Usuario creado correctamente.');
+          setFeedback('Usuario registrado correctamente.');
         }
       } else if (activeTable === 'roles') {
         if (modalMode === 'edit' && roleForm.id) {
@@ -538,6 +718,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
               status: orderForm.status,
               notes: orderForm.notes,
               review_notes: orderForm.review_notes,
+              items: orderForm.items,
             }),
           });
           setFeedback('Pedido actualizado correctamente.');
@@ -545,10 +726,12 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
           await apiFetch('/api/orders', {
             method: 'POST',
             body: JSON.stringify({
+              personnel_id: orderForm.personnel_id > 0 ? orderForm.personnel_id : null,
+              sector_id: orderForm.sector_id > 0 ? orderForm.sector_id : null,
               department: orderForm.department,
               priority: orderForm.priority,
               notes: orderForm.notes,
-              items: [{ product_id: orderForm.product_id, quantity: orderForm.quantity }],
+              items: orderForm.items,
             }),
           });
           setFeedback('Pedido creado correctamente.');
@@ -565,9 +748,8 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
             }),
           });
           setFeedback('Movimiento actualizado correctamente.');
-        } else {
-          const endpoint = movForm.type === 'INGRESO' ? '/api/movements/entry' : '/api/movements/exit';
-          await apiFetch(endpoint, {
+        } else if (movForm.type === 'INGRESO') {
+          await apiFetch('/api/movements/entry', {
             method: 'POST',
             body: JSON.stringify({
               product_id: movForm.product_id,
@@ -578,7 +760,20 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
               reason_detail: movForm.reason_detail,
             }),
           });
-          setFeedback('Movimiento registrado correctamente.');
+          setFeedback('Ingreso registrado correctamente.');
+        } else {
+          await apiFetch('/api/movements/exit', {
+            method: 'POST',
+            body: JSON.stringify({
+              items: movForm.items,
+              personnel_id: movForm.personnel_id > 0 ? movForm.personnel_id : null,
+              sector_id: movForm.sector_id > 0 ? movForm.sector_id : null,
+              responsible_name: movForm.responsible_name,
+              responsible_area: movForm.responsible_area,
+              reason_detail: movForm.reason_detail,
+            }),
+          });
+          setFeedback('Salida multi-producto registrada correctamente.');
         }
       }
 
@@ -599,6 +794,8 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     setFeedback('');
     try {
       const endpointMap: Record<CrudTableKey, string> = {
+        sectors: `/api/sectors/${deleteTarget.id}`,
+        personnel: `/api/personnel/${deleteTarget.id}`,
         categories: `/api/categories/${deleteTarget.id}`,
         products: `/api/products/${deleteTarget.id}`,
         users: `/api/users/${deleteTarget.id}`,
@@ -619,9 +816,27 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
     }
   };
 
+  const handleExportDatabase = async (format: 'sql' | 'json') => {
+    setError('');
+    setFeedback('');
+    setExportingFormat(format);
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const filename = await apiDownload(
+        `/api/admin/export-database?format=${format}`,
+        `almacenpro_respaldo_${dateStamp}.${format}`
+      );
+      setFeedback(`Base de datos exportada correctamente (${filename}).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo exportar la base de datos.');
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Database className="w-5 h-5 text-blue-700 dark:text-blue-400" />
@@ -630,18 +845,42 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
             </h2>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            Panel exclusivo de Administrador para crear, consultar, editar y eliminar registros en cada tabla SQLite
+            Panel exclusivo de Administrador para administrar sectores, personal, categorías, productos, usuarios, roles, pedidos y movimientos
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="min-h-[44px] px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Nuevo Registro</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={exportingFormat !== null}
+            onClick={() => handleExportDatabase('sql')}
+            title="Descargar respaldo completo PostgreSQL (.sql)"
+            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-800 dark:text-slate-100 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <FileCode2 className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+            <span>{exportingFormat === 'sql' ? 'Exportando...' : 'Exportar BD (.sql)'}</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={exportingFormat !== null}
+            onClick={() => handleExportDatabase('json')}
+            title="Descargar respaldo completo estructurado (.json)"
+            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-800 dark:text-slate-100 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <Download className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+            <span>{exportingFormat === 'json' ? 'Exportando...' : 'Exportar JSON'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="min-h-[44px] px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Nuevo Registro</span>
+          </button>
+        </div>
       </div>
 
       {/* Table Switcher Tabs */}
@@ -720,10 +959,244 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            Cargando registros de la tabla...
+            Cargando registros...
           </div>
         ) : (
           <>
+            {/* 0A. SECTORES */}
+            {activeTable === 'sectors' && (
+              <>
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
+                        <th className="py-3 px-4">Código</th>
+                        <th className="py-3 px-4">Sector</th>
+                        <th className="py-3 px-4">Descripción</th>
+                        <th className="py-3 px-4 text-right">Personal Asignado</th>
+                        <th className="py-3 px-4">Estado</th>
+                        <th className="py-3 px-4 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                      {filteredSectors.map((s) => (
+                        <tr key={s.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4 font-mono text-xs text-slate-600 dark:text-slate-300">
+                            {s.code}
+                          </td>
+                          <td className="py-3 px-4 font-semibold text-slate-900 dark:text-slate-100">
+                            {s.name}
+                          </td>
+                          <td className="py-3 px-4 text-xs text-slate-500 dark:text-slate-400 max-w-sm truncate">
+                            {s.description || '—'}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono tabular-nums font-medium">
+                            {s.personnel_count ?? 0}
+                          </td>
+                          <td className="py-3 px-4 text-xs font-medium">
+                            <span
+                              className={
+                                s.active === 1
+                                  ? 'text-emerald-700 dark:text-emerald-400'
+                                  : 'text-slate-500 dark:text-slate-400'
+                              }
+                            >
+                              {s.active === 1 ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditSector(s)}
+                                className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Editar sector"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    table: 'sectors',
+                                    id: s.id,
+                                    label: s.name,
+                                    hint: 'Solo se puede eliminar si no tiene personal asignado.',
+                                  })
+                                }
+                                className="p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50"
+                                title="Eliminar sector"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredSectors.map((s) => (
+                    <div key={s.id} className="p-4 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-mono text-slate-500 dark:text-slate-400">{s.code}</p>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{s.name}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            {s.personnel_count ?? 0} persona(s) · {s.description || 'Sin descripción'}
+                          </p>
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          {s.active === 1 ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openEditSector(s)}
+                          className="flex-1 min-h-[44px] rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center justify-center gap-1.5"
+                        >
+                          <Edit3 className="w-4 h-4" /> Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDeleteTarget({
+                              table: 'sectors',
+                              id: s.id,
+                              label: s.name,
+                              hint: 'Solo se puede eliminar si no tiene personal asignado.',
+                            })
+                          }
+                          className="flex-1 min-h-[44px] rounded-lg border border-red-200 dark:border-red-900 text-xs font-medium text-red-700 dark:text-red-400 flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="w-4 h-4" /> Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* 0B. PERSONAL */}
+            {activeTable === 'personnel' && (
+              <>
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
+                        <th className="py-3 px-4">Código</th>
+                        <th className="py-3 px-4">Nombre y Cargo</th>
+                        <th className="py-3 px-4">Sector al que pertenece</th>
+                        <th className="py-3 px-4">Contacto</th>
+                        <th className="py-3 px-4">Estado</th>
+                        <th className="py-3 px-4 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                      {filteredPersonnel.map((p) => (
+                        <tr key={p.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4 font-mono text-xs text-slate-600 dark:text-slate-300">
+                            {p.code}
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-semibold text-slate-900 dark:text-slate-100">{p.name}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{p.position}</p>
+                          </td>
+                          <td className="py-3 px-4 text-xs font-medium text-blue-700 dark:text-blue-400">
+                            {p.sector_name}
+                          </td>
+                          <td className="py-3 px-4 text-xs text-slate-500 dark:text-slate-400">
+                            <p>{p.email || '—'}</p>
+                            <p className="font-mono">{p.phone || ''}</p>
+                          </td>
+                          <td className="py-3 px-4 text-xs font-medium">
+                            <span
+                              className={
+                                p.active === 1
+                                  ? 'text-emerald-700 dark:text-emerald-400'
+                                  : 'text-slate-500 dark:text-slate-400'
+                              }
+                            >
+                              {p.active === 1 ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditPersonnel(p)}
+                                className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Editar personal"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    table: 'personnel',
+                                    id: p.id,
+                                    label: `${p.name} (${p.sector_name})`,
+                                  })
+                                }
+                                className="p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50"
+                                title="Eliminar personal"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredPersonnel.map((p) => (
+                    <div key={p.id} className="p-4 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                            {p.code} · {p.sector_name}
+                          </p>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{p.name}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{p.position}</p>
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          {p.active === 1 ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => openEditPersonnel(p)}
+                          className="flex-1 min-h-[44px] rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium flex items-center justify-center gap-1.5"
+                        >
+                          <Edit3 className="w-4 h-4" /> Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDeleteTarget({
+                              table: 'personnel',
+                              id: p.id,
+                              label: `${p.name} (${p.sector_name})`,
+                            })
+                          }
+                          className="flex-1 min-h-[44px] rounded-lg border border-red-200 dark:border-red-900 text-xs font-medium text-red-700 dark:text-red-400 flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="w-4 h-4" /> Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
             {/* 1. CATEGORÍAS */}
             {activeTable === 'categories' && (
               <>
@@ -844,7 +1317,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
-                        <th className="py-3 px-4">SKU / Código</th>
+                        <th className="py-3 px-4">SKU</th>
                         <th className="py-3 px-4">Producto</th>
                         <th className="py-3 px-4">Categoría</th>
                         <th className="py-3 px-4 text-right">Stock</th>
@@ -858,7 +1331,6 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                         <tr key={p.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
                           <td className="py-3 px-4 font-mono text-xs text-slate-600 dark:text-slate-300">
                             <p className="font-semibold">{p.sku}</p>
-                            <p className="text-[11px] text-slate-400">{p.barcode}</p>
                           </td>
                           <td className="py-3 px-4">
                             <p className="font-semibold text-slate-900 dark:text-slate-100">{p.name}</p>
@@ -960,10 +1432,10 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                     <thead>
                       <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
                         <th className="py-3 px-4">ID</th>
-                        <th className="py-3 px-4">Nombre</th>
+                        <th className="py-3 px-4">Nombre / Usuario</th>
                         <th className="py-3 px-4">Correo</th>
                         <th className="py-3 px-4">Rol</th>
-                        <th className="py-3 px-4">Área</th>
+                        <th className="py-3 px-4">Sector</th>
                         <th className="py-3 px-4">Estado</th>
                         <th className="py-3 px-4 text-right">Acciones</th>
                       </tr>
@@ -972,7 +1444,14 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                       {filteredUsers.map((u) => (
                         <tr key={u.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
                           <td className="py-3 px-4 font-mono text-xs text-slate-500">#{u.id}</td>
-                          <td className="py-3 px-4 font-semibold text-slate-900 dark:text-slate-100">{u.name}</td>
+                          <td className="py-3 px-4">
+                            <p className="font-semibold text-slate-900 dark:text-slate-100">{u.name}</p>
+                            {u.username && (
+                              <p className="text-xs font-mono text-blue-700 dark:text-blue-400">
+                                @{u.username}
+                              </p>
+                            )}
+                          </td>
                           <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">{u.email}</td>
                           <td className="py-3 px-4 text-xs font-medium text-blue-700 dark:text-blue-400">
                             {u.role_name}
@@ -1175,7 +1654,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                     <thead>
                       <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
                         <th className="py-3 px-4">Folio</th>
-                        <th className="py-3 px-4">Solicitante / Área</th>
+                        <th className="py-3 px-4">Personal / Sector</th>
                         <th className="py-3 px-4">Ítems</th>
                         <th className="py-3 px-4">Prioridad</th>
                         <th className="py-3 px-4">Estado</th>
@@ -1189,8 +1668,12 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                             {o.folio}
                           </td>
                           <td className="py-3 px-4">
-                            <p className="font-semibold text-slate-900 dark:text-slate-100">{o.requester_name}</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">{o.department}</p>
+                            <p className="font-semibold text-slate-900 dark:text-slate-100">
+                              {o.personnel_name || o.requester_name}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {o.sector_name || o.department}
+                            </p>
                           </td>
                           <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">
                             {o.items.map((it) => `${it.product_name} (${it.quantity_requested})`).join(', ')}
@@ -1250,7 +1733,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                             {o.folio} · {o.status}
                           </p>
                           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                            {o.requester_name} ({o.department})
+                            {o.personnel_name || o.requester_name} ({o.sector_name || o.department})
                           </p>
                         </div>
                         <span className="text-xs font-medium text-slate-500">{o.priority}</span>
@@ -1294,7 +1777,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                         <th className="py-3 px-4">Producto</th>
                         <th className="py-3 px-4 text-right">Cantidad</th>
                         <th className="py-3 px-4 text-right">Valor Total (Bs.)</th>
-                        <th className="py-3 px-4">Responsable / Detalle</th>
+                        <th className="py-3 px-4">Personal / Sector</th>
                         <th className="py-3 px-4 text-right">Acciones</th>
                       </tr>
                     </thead>
@@ -1327,7 +1810,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                           </td>
                           <td className="py-3 px-4 max-w-xs">
                             <p className="text-xs font-medium text-slate-900 dark:text-slate-100">
-                              {m.responsible_name} · {m.responsible_area}
+                              {m.responsible_name} · {m.sector_name || m.responsible_area}
                             </p>
                             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{m.reason_detail}</p>
                           </td>
@@ -1374,7 +1857,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             {m.product_name}
                           </p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">{m.responsible_name}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {m.responsible_name} · {m.sector_name || m.responsible_area}
+                          </p>
                         </div>
                         <div className="text-right font-mono tabular-nums">
                           <p className="text-sm font-bold">
@@ -1438,6 +1923,157 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
             </div>
 
             <form onSubmit={handleSaveModal} className="p-5 space-y-3.5 overflow-y-auto">
+              {/* SECTORES FORM */}
+              {activeTable === 'sectors' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Código (opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={sectorForm.code}
+                        onChange={(e) => setSectorForm({ ...sectorForm, code: e.target.value.toUpperCase() })}
+                        placeholder="SEC-AUTO"
+                        className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Nombre del Sector *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={sectorForm.name}
+                        onChange={(e) => setSectorForm({ ...sectorForm, name: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      Descripción
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={sectorForm.description}
+                      onChange={(e) => setSectorForm({ ...sectorForm, description: e.target.value })}
+                      className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={sectorForm.active}
+                      onChange={(e) => setSectorForm({ ...sectorForm, active: e.target.checked })}
+                      className="w-4 h-4 rounded"
+                    />
+                    Sector activo para salidas y solicitudes
+                  </label>
+                </>
+              )}
+
+              {/* PERSONAL FORM */}
+              {activeTable === 'personnel' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Código (opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={personnelForm.code}
+                        onChange={(e) =>
+                          setPersonnelForm({ ...personnelForm, code: e.target.value.toUpperCase() })
+                        }
+                        placeholder="PER-AUTO"
+                        className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Sector al que pertenece *
+                      </label>
+                      <select
+                        required
+                        value={personnelForm.sector_id}
+                        onChange={(e) =>
+                          setPersonnelForm({ ...personnelForm, sector_id: Number(e.target.value) })
+                        }
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      >
+                        {sectors.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Nombre completo *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={personnelForm.name}
+                        onChange={(e) => setPersonnelForm({ ...personnelForm, name: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Cargo / Puesto
+                      </label>
+                      <input
+                        type="text"
+                        value={personnelForm.position}
+                        onChange={(e) => setPersonnelForm({ ...personnelForm, position: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Correo
+                      </label>
+                      <input
+                        type="email"
+                        value={personnelForm.email}
+                        onChange={(e) => setPersonnelForm({ ...personnelForm, email: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Teléfono
+                      </label>
+                      <input
+                        type="text"
+                        value={personnelForm.phone}
+                        onChange={(e) => setPersonnelForm({ ...personnelForm, phone: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={personnelForm.active}
+                      onChange={(e) => setPersonnelForm({ ...personnelForm, active: e.target.checked })}
+                      className="w-4 h-4 rounded"
+                    />
+                    Trabajador activo
+                  </label>
+                </>
+              )}
+
               {/* CATEGORÍAS FORM */}
               {activeTable === 'categories' && (
                 <>
@@ -1493,7 +2129,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
               {/* PRODUCTOS FORM */}
               {activeTable === 'products' && (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                         SKU *
@@ -1506,30 +2142,18 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                         className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                       />
                     </div>
-                    <div>
+                    <div className="sm:col-span-2">
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        Código de Barras *
+                        Nombre del producto *
                       </label>
                       <input
                         type="text"
                         required
-                        value={prodForm.barcode}
-                        onChange={(e) => setProdForm({ ...prodForm, barcode: e.target.value })}
-                        className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                        value={prodForm.name}
+                        onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })}
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                       />
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                      Nombre del producto *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={prodForm.name}
-                      onChange={(e) => setProdForm({ ...prodForm, name: e.target.value })}
-                      className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                    />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
@@ -1648,6 +2272,39 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                       className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                     />
                   </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        Usuario (acceso clásico)
+                      </label>
+                      <input
+                        type="text"
+                        value={userForm.username}
+                        onChange={(e) =>
+                          setUserForm({ ...userForm, username: e.target.value.toLowerCase() })
+                        }
+                        placeholder="jperez"
+                        className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                        {modalMode === 'edit' ? 'Nueva contraseña (opcional)' : 'Contraseña'}
+                      </label>
+                      <input
+                        type="password"
+                        minLength={6}
+                        value={userForm.password}
+                        onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                        placeholder={
+                          modalMode === 'edit'
+                            ? 'Dejar vacío para conservar'
+                            : 'Mín. 6 caracteres'
+                        }
+                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                       Correo electrónico *
@@ -1679,28 +2336,29 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        Área / Departamento
+                        Sector
                       </label>
-                      <input
-                        type="text"
-                        value={userForm.department}
-                        onChange={(e) => setUserForm({ ...userForm, department: e.target.value })}
+                      <select
+                        value={userForm.sector_id}
+                        onChange={(e) => {
+                          const sid = Number(e.target.value);
+                          const sec = sectors.find((s) => s.id === sid);
+                          setUserForm({
+                            ...userForm,
+                            sector_id: sid,
+                            department: sec ? sec.name : userForm.department,
+                          });
+                        }}
                         className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                      />
+                      >
+                        {sectors.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                        <option value={0}>Otro ({userForm.department})</option>
+                      </select>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                      {modalMode === 'create' ? 'Contraseña (mín. 6) *' : 'Nueva contraseña (opcional)'}
-                    </label>
-                    <input
-                      type="password"
-                      required={modalMode === 'create'}
-                      minLength={6}
-                      value={userForm.password}
-                      onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                      className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                    />
                   </div>
                   <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">
                     <input
@@ -1781,21 +2439,62 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                 </>
               )}
 
-              {/* PEDIDOS FORM */}
+              {/* PEDIDOS FORM (Multi-Producto + Personal + Sector) */}
               {activeTable === 'orders' && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {modalMode === 'create' && (
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                          Personal solicitante
+                        </label>
+                        <select
+                          value={orderForm.personnel_id}
+                          onChange={(e) => {
+                            const pid = Number(e.target.value);
+                            const per = personnelList.find((x) => x.id === pid);
+                            setOrderForm({
+                              ...orderForm,
+                              personnel_id: pid,
+                              sector_id: per ? per.sector_id : orderForm.sector_id,
+                              department: per ? per.sector_name : orderForm.department,
+                            });
+                          }}
+                          className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                        >
+                          <option value={0}>Usuario actual ({user.name})</option>
+                          {personnelList.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.sector_name})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        Área solicitante *
+                        Sector / Área *
                       </label>
-                      <input
-                        type="text"
-                        required
-                        value={orderForm.department}
-                        onChange={(e) => setOrderForm({ ...orderForm, department: e.target.value })}
+                      <select
+                        value={orderForm.sector_id}
+                        onChange={(e) => {
+                          const sid = Number(e.target.value);
+                          const sec = sectors.find((s) => s.id === sid);
+                          setOrderForm({
+                            ...orderForm,
+                            sector_id: sid,
+                            department: sec ? sec.name : orderForm.department,
+                          });
+                        }}
                         className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                      />
+                      >
+                        {sectors.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                        <option value={0}>{orderForm.department}</option>
+                      </select>
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1814,7 +2513,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                     </div>
                   </div>
 
-                  {modalMode === 'edit' ? (
+                  {modalMode === 'edit' && (
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                         Estado del pedido
@@ -1835,16 +2534,39 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                         <option value="Despachado">Despachado</option>
                       </select>
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Producto *
-                        </label>
+                  )}
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Productos del pedido *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOrderForm({
+                            ...orderForm,
+                            items: [
+                              ...orderForm.items,
+                              { product_id: products[0]?.id || 0, quantity: 1 },
+                            ],
+                          })
+                        }
+                        className="text-xs font-semibold text-blue-700 dark:text-blue-400 flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Agregar producto
+                      </button>
+                    </div>
+                    {orderForm.items.map((line, idx) => (
+                      <div key={idx} className="flex gap-2">
                         <select
-                          value={orderForm.product_id}
-                          onChange={(e) => setOrderForm({ ...orderForm, product_id: Number(e.target.value) })}
-                          className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                          value={line.product_id}
+                          onChange={(e) => {
+                            const next = [...orderForm.items];
+                            next[idx].product_id = Number(e.target.value);
+                            setOrderForm({ ...orderForm, items: next });
+                          }}
+                          className="flex-1 min-h-[40px] px-2.5 py-1.5 text-xs bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                         >
                           {products.map((p) => (
                             <option key={p.id} value={p.id}>
@@ -1852,22 +2574,35 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                             </option>
                           ))}
                         </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Cantidad *
-                        </label>
                         <input
                           type="number"
                           min={1}
                           required
-                          value={orderForm.quantity}
-                          onChange={(e) => setOrderForm({ ...orderForm, quantity: Number(e.target.value) })}
-                          className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                          value={line.quantity}
+                          onChange={(e) => {
+                            const next = [...orderForm.items];
+                            next[idx].quantity = Math.max(1, Number(e.target.value));
+                            setOrderForm({ ...orderForm, items: next });
+                          }}
+                          className="w-20 min-h-[40px] px-2.5 py-1.5 text-xs font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                         />
+                        {orderForm.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOrderForm({
+                                ...orderForm,
+                                items: orderForm.items.filter((_, i) => i !== idx),
+                              })
+                            }
+                            className="p-2 text-red-600 dark:text-red-400"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
 
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1901,62 +2636,191 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                             className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
                           >
                             <option value="INGRESO">INGRESO</option>
-                            <option value="SALIDA">SALIDA</option>
+                            <option value="SALIDA">SALIDA (Multi-producto)</option>
                           </select>
                         </div>
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                            Cantidad *
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            required
-                            value={movForm.quantity}
-                            onChange={(e) => setMovForm({ ...movForm, quantity: Number(e.target.value) })}
-                            className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                          />
-                        </div>
+                        {movForm.type === 'INGRESO' && (
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Cantidad *
+                            </label>
+                            <input
+                              type="number"
+                              min={1}
+                              required
+                              value={movForm.quantity}
+                              onChange={(e) => setMovForm({ ...movForm, quantity: Number(e.target.value) })}
+                              className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                            />
+                          </div>
+                        )}
                       </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Producto *
-                        </label>
-                        <select
-                          value={movForm.product_id}
-                          onChange={(e) => {
-                            const pid = Number(e.target.value);
-                            const prod = products.find((p) => p.id === pid);
-                            setMovForm({
-                              ...movForm,
-                              product_id: pid,
-                              cost_entry: prod?.cost_current ?? 0,
-                            });
-                          }}
-                          className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                        >
-                          {products.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.sku} — {p.name} (Stock: {p.stock_current})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {movForm.type === 'INGRESO' && (
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                            Costo Unitario de Ingreso (Bs.) *
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            required
-                            value={movForm.cost_entry}
-                            onChange={(e) => setMovForm({ ...movForm, cost_entry: Number(e.target.value) })}
-                            className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                          />
-                        </div>
+
+                      {movForm.type === 'INGRESO' ? (
+                        <>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Producto *
+                            </label>
+                            <select
+                              value={movForm.product_id}
+                              onChange={(e) => {
+                                const pid = Number(e.target.value);
+                                const prod = products.find((p) => p.id === pid);
+                                setMovForm({
+                                  ...movForm,
+                                  product_id: pid,
+                                  cost_entry: prod?.cost_current ?? 0,
+                                });
+                              }}
+                              className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                            >
+                              {products.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.sku} — {p.name} (Stock: {p.stock_current})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Costo Unitario de Ingreso (Bs.) *
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              required
+                              value={movForm.cost_entry}
+                              onChange={(e) => setMovForm({ ...movForm, cost_entry: Number(e.target.value) })}
+                              className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Personal *
+                              </label>
+                              <select
+                                value={movForm.personnel_id}
+                                onChange={(e) => {
+                                  const pid = Number(e.target.value);
+                                  const per = personnelList.find((x) => x.id === pid);
+                                  setMovForm({
+                                    ...movForm,
+                                    personnel_id: pid,
+                                    sector_id: per ? per.sector_id : movForm.sector_id,
+                                    responsible_name: per ? per.name : '',
+                                    responsible_area: per ? per.sector_name : movForm.responsible_area,
+                                  });
+                                }}
+                                className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                              >
+                                {personnelList.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name} ({p.sector_name})
+                                  </option>
+                                ))}
+                                <option value={0}>Otro responsable</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Sector *
+                              </label>
+                              <select
+                                value={movForm.sector_id}
+                                onChange={(e) => {
+                                  const sid = Number(e.target.value);
+                                  const sec = sectors.find((s) => s.id === sid);
+                                  setMovForm({
+                                    ...movForm,
+                                    sector_id: sid,
+                                    responsible_area: sec ? sec.name : movForm.responsible_area,
+                                  });
+                                }}
+                                className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                              >
+                                {sectors.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                                Productos en salida *
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setMovForm({
+                                    ...movForm,
+                                    items: [
+                                      ...movForm.items,
+                                      { product_id: products[0]?.id || 0, quantity: 1 },
+                                    ],
+                                  })
+                                }
+                                className="text-xs font-semibold text-blue-700 dark:text-blue-400 flex items-center gap-1"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Agregar producto
+                              </button>
+                            </div>
+                            {movForm.items.map((line, idx) => (
+                              <div key={idx} className="flex gap-2">
+                                <select
+                                  value={line.product_id}
+                                  onChange={(e) => {
+                                    const next = [...movForm.items];
+                                    next[idx].product_id = Number(e.target.value);
+                                    setMovForm({ ...movForm, items: next });
+                                  }}
+                                  className="flex-1 min-h-[40px] px-2.5 py-1.5 text-xs bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                                >
+                                  {products.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.sku} — {p.name} (Stock: {p.stock_current})
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  required
+                                  value={line.quantity}
+                                  onChange={(e) => {
+                                    const next = [...movForm.items];
+                                    next[idx].quantity = Math.max(1, Number(e.target.value));
+                                    setMovForm({ ...movForm, items: next });
+                                  }}
+                                  className="w-20 min-h-[40px] px-2.5 py-1.5 text-xs font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                                />
+                                {movForm.items.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setMovForm({
+                                        ...movForm,
+                                        items: movForm.items.filter((_, i) => i !== idx),
+                                      })
+                                    }
+                                    className="p-2 text-red-600 dark:text-red-400"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
                       )}
                     </>
                   ) : (
@@ -1974,31 +2838,34 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        Responsable *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={movForm.responsible_name}
-                        onChange={(e) => setMovForm({ ...movForm, responsible_name: e.target.value })}
-                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                      />
+                  {(modalMode === 'edit' || movForm.type === 'INGRESO' || movForm.personnel_id === 0) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                          Responsable *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={movForm.responsible_name}
+                          onChange={(e) => setMovForm({ ...movForm, responsible_name: e.target.value })}
+                          className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                          Sector / Proveedor
+                        </label>
+                        <input
+                          type="text"
+                          value={movForm.responsible_area}
+                          onChange={(e) => setMovForm({ ...movForm, responsible_area: e.target.value })}
+                          className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        Área / Proveedor
-                      </label>
-                      <input
-                        type="text"
-                        value={movForm.responsible_area}
-                        onChange={(e) => setMovForm({ ...movForm, responsible_area: e.target.value })}
-                        className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-                      />
-                    </div>
-                  </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
                       Detalle / Motivo *

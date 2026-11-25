@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ArrowDownLeft,
   ArrowLeftRight,
+  ArrowUpRight,
   BarChart3,
   Boxes,
   Calendar,
@@ -11,10 +13,14 @@ import {
   X,
 } from 'lucide-react';
 import { MONTHS_ES, apiFetch, formatCurrency, formatDateTime } from '../lib/api';
-import { downloadPeriodReportPdf } from '../lib/pdf';
-import type { ReportSummary } from '../types';
+import {
+  downloadExpensesReportPdf,
+  downloadIncomeReportPdf,
+  downloadPeriodReportPdf,
+} from '../lib/pdf';
+import type { Movement, ReportSummary } from '../types';
 
-type ReportTab = 'general' | 'users' | 'categories' | 'movements';
+type ReportTab = 'general' | 'ingresos' | 'egresos' | 'users' | 'categories' | 'movements';
 
 export const ReportsView: React.FC = () => {
   const now = new Date();
@@ -108,6 +114,47 @@ export const ReportsView: React.FC = () => {
           String(c.salida_value),
         ]),
       ];
+    } else if (activeTab === 'ingresos' || activeTab === 'egresos') {
+      const isIncome = activeTab === 'ingresos';
+      const list: Movement[] = isIncome
+        ? (summary.ingresoDetails ?? summary.movementDetails.filter((m) => m.type === 'INGRESO'))
+        : (summary.egresoDetails ?? summary.movementDetails.filter((m) => m.type === 'SALIDA'));
+      prefix = isIncome ? `Reporte_Ingresos_${mode}` : `Reporte_Egresos_Salidas_${mode}`;
+      rows = [
+        ['Centro de salud Pumas Andinos', isIncome ? 'Reporte de Ingresos' : 'Reporte de Egresos (Salidas)'],
+        [
+          'Folio',
+          'Fecha',
+          'Tipo',
+          'SKU',
+          'Producto',
+          'Categoria',
+          'Cantidad',
+          'Unidad',
+          'Costo Unitario (Bs.)',
+          'Operador',
+          isIncome ? 'Recibido / Proveedor' : 'Responsable / Destino',
+          'Sector / Area',
+          'Detalle / Motivo',
+          'Valor Total (Bs.)',
+        ],
+        ...list.map((m) => [
+          m.folio,
+          m.created_at,
+          m.type,
+          m.sku,
+          `"${m.product_name.replace(/"/g, '""')}"`,
+          `"${(m.category || '').replace(/"/g, '""')}"`,
+          String(m.quantity),
+          m.unit,
+          String(m.cost_resulting),
+          `"${(m.operator_name || 'Sistema').replace(/"/g, '""')}"`,
+          `"${m.responsible_name.replace(/"/g, '""')}"`,
+          `"${(m.sector_name || m.responsible_area).replace(/"/g, '""')}"`,
+          `"${m.reason_detail.replace(/"/g, '""')}"`,
+          String(m.total_value),
+        ]),
+      ];
     } else if (activeTab === 'movements') {
       prefix = `Reporte_Movimientos_${mode}`;
       rows = [
@@ -191,20 +238,43 @@ export const ReportsView: React.FC = () => {
     icon: React.ComponentType<{ className?: string }>;
   }> = [
     { key: 'general', label: 'Resumen General', icon: BarChart3 },
+    { key: 'ingresos', label: 'Reporte de Ingresos', icon: ArrowDownLeft },
+    { key: 'egresos', label: 'Reporte de Egresos (Salidas)', icon: ArrowUpRight },
     { key: 'users', label: 'Por Usuario', icon: Users },
     { key: 'categories', label: 'Por Categoría', icon: FolderTree },
     { key: 'movements', label: 'Movimientos y Stock', icon: ArrowLeftRight },
   ];
 
+  const ingresoRows = summary
+    ? (summary.ingresoDetails ?? summary.movementDetails.filter((m) => m.type === 'INGRESO'))
+    : [];
+  const egresoRows = summary
+    ? (summary.egresoDetails ?? summary.movementDetails.filter((m) => m.type === 'SALIDA'))
+    : [];
+
+  const handleDownloadPrimaryPdf = () => {
+    if (!summary) return;
+    if (activeTab === 'ingresos') {
+      downloadIncomeReportPdf(summary);
+    } else if (activeTab === 'egresos') {
+      downloadExpensesReportPdf(summary);
+    } else {
+      downloadPeriodReportPdf(summary);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100">
-            Reportes Mensuales, Anuales, por Usuario y Categoría
+          <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+            Centro de salud Pumas Andinos
+          </p>
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 mt-0.5 text-balance">
+            Reportes Principales, Ingresos y Egresos (Salidas)
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Análisis en Bolivianos (Bs.), desempeño por operador, inventario por categoría y stock actualizado
+            Centro de salud Pumas Andinos · Control de ingresos, salidas, desempeño por usuario y stock en Bolivianos (Bs.)
           </p>
         </div>
 
@@ -220,12 +290,18 @@ export const ReportsView: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => summary && downloadPeriodReportPdf(summary)}
+            onClick={handleDownloadPrimaryPdf}
             disabled={!summary}
             className="min-h-[42px] px-4 py-2 rounded-lg bg-slate-900 dark:bg-blue-700 hover:bg-slate-800 dark:hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5"
           >
             <Download className="w-4 h-4" />
-            <span>Descargar Reporte PDF</span>
+            <span>
+              {activeTab === 'ingresos'
+                ? 'Descargar PDF Ingresos'
+                : activeTab === 'egresos'
+                  ? 'Descargar PDF Egresos'
+                  : 'Descargar Reporte PDF'}
+            </span>
           </button>
         </div>
       </div>
@@ -453,6 +529,196 @@ export const ReportsView: React.FC = () => {
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Dedicated Income Report (Reporte de Ingresos) */}
+          {activeTab === 'ingresos' && (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                    Centro de salud Pumas Andinos
+                  </p>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    Reporte de Ingresos de Almacén ({ingresoRows.length})
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Total ingresado: {summary.totals.ingreso_units} unidades · Valor:{' '}
+                    {formatCurrency(summary.totals.ingreso_value)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadIncomeReportPdf(summary)}
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>PDF de Ingresos</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <th className="py-3 px-4">Folio / Fecha</th>
+                      <th className="py-3 px-4">Producto / SKU</th>
+                      <th className="py-3 px-4">Categoría</th>
+                      <th className="py-3 px-4 text-right">Cantidad</th>
+                      <th className="py-3 px-4 text-right">Costo Unit.</th>
+                      <th className="py-3 px-4">Operador / Detalle</th>
+                      <th className="py-3 px-4 text-right">Total Ingreso (Bs.)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                    {ingresoRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                          No hay ingresos registrados para los filtros seleccionados en este período.
+                        </td>
+                      </tr>
+                    ) : (
+                      ingresoRows.map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <p className="font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                              {m.folio}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {formatDateTime(m.created_at)}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-medium text-slate-900 dark:text-slate-100">{m.product_name}</p>
+                            <p className="text-xs font-mono text-slate-500 dark:text-slate-400">{m.sku}</p>
+                          </td>
+                          <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">
+                            {m.category || 'General'}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums whitespace-nowrap">
+                            +{m.quantity} {m.unit}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-xs text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                            {formatCurrency(m.cost_resulting)}
+                          </td>
+                          <td className="py-3 px-4 max-w-xs">
+                            <p className="text-xs font-medium text-slate-900 dark:text-slate-100">
+                              {m.operator_name || 'Sistema'} · {m.responsible_area || 'Almacén'}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                              {m.reason_detail}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
+                            {formatCurrency(m.total_value)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Dedicated Expenses / Exits Report (Reporte de Egresos / Salidas) */}
+          {activeTab === 'egresos' && (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    Centro de salud Pumas Andinos
+                  </p>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    Reporte de Egresos / Salidas de Almacén ({egresoRows.length})
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Total despachado: {summary.totals.salida_units} unidades · Valor:{' '}
+                    {formatCurrency(summary.totals.salida_value)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadExpensesReportPdf(summary)}
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>PDF de Egresos</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/60 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <th className="py-3 px-4">Folio / Fecha</th>
+                      <th className="py-3 px-4">Producto / SKU</th>
+                      <th className="py-3 px-4">Categoría</th>
+                      <th className="py-3 px-4 text-right">Cantidad</th>
+                      <th className="py-3 px-4 text-right">Costo Unit.</th>
+                      <th className="py-3 px-4">Responsable / Sector</th>
+                      <th className="py-3 px-4">Motivo de Salida</th>
+                      <th className="py-3 px-4 text-right">Total Egreso (Bs.)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                    {egresoRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                          No hay egresos (salidas) registrados para los filtros seleccionados en este período.
+                        </td>
+                      </tr>
+                    ) : (
+                      egresoRows.map((m) => (
+                        <tr key={m.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <p className="font-mono text-xs font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
+                              {m.folio}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {formatDateTime(m.created_at)}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-medium text-slate-900 dark:text-slate-100">{m.product_name}</p>
+                            <p className="text-xs font-mono text-slate-500 dark:text-slate-400">{m.sku}</p>
+                          </td>
+                          <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-300">
+                            {m.category || 'General'}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-semibold text-amber-700 dark:text-amber-400 tabular-nums whitespace-nowrap">
+                            -{m.quantity} {m.unit}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-xs text-slate-700 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                            {formatCurrency(m.cost_resulting)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="text-xs font-medium text-slate-900 dark:text-slate-100">
+                              {m.responsible_name || 'No especificado'}
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {m.sector_name || m.responsible_area}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4 max-w-xs">
+                            <p className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                              {m.reason_detail || 'Salida autorizada'}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
+                            {formatCurrency(m.total_value)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

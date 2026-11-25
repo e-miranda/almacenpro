@@ -1,16 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   Copy,
   Download,
   FileText,
   Mail,
+  MapPin,
   Share2,
   UserCheck,
   X,
 } from 'lucide-react';
 import type { Movement } from '../types';
-import { formatCurrency, formatDateTime } from '../lib/api';
+import { apiFetch, formatCurrency, formatDateTime } from '../lib/api';
 import {
   buildExitSummaryText,
   downloadExitPdf,
@@ -20,28 +21,78 @@ import {
 
 interface ExitReportModalProps {
   movement: Movement | null;
+  movements?: Movement[];
   onClose: () => void;
 }
 
-export const ExitReportModal: React.FC<ExitReportModalProps> = ({ movement, onClose }) => {
+export const ExitReportModal: React.FC<ExitReportModalProps> = ({
+  movement,
+  movements,
+  onClose,
+}) => {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [feedback, setFeedback] = useState('');
   const [copied, setCopied] = useState(false);
+  const [batchItems, setBatchItems] = useState<Movement[]>([]);
+  const [loadingBatch, setLoadingBatch] = useState(false);
+
+  useEffect(() => {
+    setFeedback('');
+    setCopied(false);
+
+    if (!movement) {
+      setBatchItems([]);
+      return;
+    }
+
+    if (movements && movements.length > 0) {
+      setBatchItems(movements);
+      return;
+    }
+
+    setBatchItems([movement]);
+
+    if (movement.exit_batch_id || movement.folio.startsWith('SAL-')) {
+      let active = true;
+      setLoadingBatch(true);
+      const target = movement.exit_batch_id ? String(movement.exit_batch_id) : movement.folio;
+      apiFetch<{ items: Movement[] }>(`/api/movements/exit-batch/${encodeURIComponent(target)}`)
+        .then((res) => {
+          if (active && Array.isArray(res.items) && res.items.length > 0) {
+            setBatchItems(res.items);
+          }
+        })
+        .catch(() => {
+          // fallback to single movement
+        })
+        .finally(() => {
+          if (active) setLoadingBatch(false);
+        });
+      return () => {
+        active = false;
+      };
+    }
+  }, [movement, movements]);
 
   if (!movement) return null;
 
+  const items = batchItems.length > 0 ? batchItems : [movement];
+  const primary = items[0];
+  const grandTotal = items.reduce((acc, m) => acc + (Number(m.total_value) || 0), 0);
+  const totalUnits = items.reduce((acc, m) => acc + (Number(m.quantity) || 0), 0);
+
   const handleDownload = () => {
-    downloadExitPdf(movement);
-    setFeedback(`Archivo Reporte_Salida_${movement.folio}.pdf descargado.`);
+    downloadExitPdf(items);
+    setFeedback(`Archivo Reporte_Salida_${primary.folio}.pdf descargado.`);
   };
 
   const handleShare = async () => {
-    const res = await shareExitPdfMobile(movement);
+    const res = await shareExitPdfMobile(items);
     setFeedback(res.message);
   };
 
   const handleEmail = () => {
-    exportExitByEmail(movement, recipientEmail.trim());
+    exportExitByEmail(items, recipientEmail.trim());
     setFeedback(
       `PDF descargado y cliente de correo abierto${recipientEmail ? ` para ${recipientEmail}` : ''}. Adjunta el PDF generado.`
     );
@@ -49,7 +100,7 @@ export const ExitReportModal: React.FC<ExitReportModalProps> = ({ movement, onCl
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(buildExitSummaryText(movement));
+      await navigator.clipboard.writeText(buildExitSummaryText(items));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -72,11 +123,14 @@ export const ExitReportModal: React.FC<ExitReportModalProps> = ({ movement, onCl
               <FileText className="w-5 h-5" />
             </div>
             <div>
+              <p className="text-[11px] font-semibold text-blue-700 dark:text-blue-400">
+                Centro de salud Pumas Andinos
+              </p>
               <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                Reporte de Salida · {movement.folio}
+                Reporte de Salida · {primary.folio}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {formatDateTime(movement.created_at)}
+                {formatDateTime(primary.created_at)} · {items.length} producto(s)
               </p>
             </div>
           </div>
@@ -92,44 +146,56 @@ export const ExitReportModal: React.FC<ExitReportModalProps> = ({ movement, onCl
 
         <div className="p-5 space-y-4 overflow-y-auto">
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 p-4 space-y-3">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-700 pb-3">
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Ítem o Material Entregado</p>
-                <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  {movement.product_name}
-                </p>
-                <p className="text-xs font-mono text-slate-600 dark:text-slate-400 mt-0.5 tabular-nums">
-                  {movement.sku} · {movement.barcode}
-                </p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Cantidad</p>
-                <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 tabular-nums">
-                  {movement.quantity} {movement.unit}
-                </p>
-              </div>
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Materiales Entregados {loadingBatch ? '(cargando lote...)' : ''}
+              </p>
+              <span className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                {totalUnits} uds. totales
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <div className="divide-y divide-slate-200 dark:divide-slate-700 max-h-52 overflow-y-auto pr-1">
+              {items.map((item) => (
+                <div key={item.id} className="py-2.5 flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {item.product_name}
+                    </p>
+                    <p className="text-xs font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+                      {item.sku} · Unit: {formatCurrency(item.cost_resulting)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+                      {item.quantity} {item.unit}
+                    </p>
+                    <p className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                      {formatCurrency(item.total_value)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm pt-2 border-t border-slate-200 dark:border-slate-700">
               <div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
                   <UserCheck className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
-                  Responsable que recibe
+                  Personal responsable
                 </p>
                 <p className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                  {movement.responsible_name || 'No especificado'}
+                  {primary.responsible_name || 'No especificado'}
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {movement.responsible_area || 'Operaciones'}
+                <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
+                  <MapPin className="w-3 h-3" />
+                  Sector: {primary.sector_name || primary.responsible_area || 'Operaciones'}
                 </p>
               </div>
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Valoración de Salida</p>
-                <p className="font-semibold font-mono text-slate-900 dark:text-slate-100 mt-0.5 tabular-nums">
-                  {formatCurrency(movement.total_value)}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                  Costo unitario: {formatCurrency(movement.cost_resulting)}
+              <div className="sm:text-right">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Valoración Total de Salida</p>
+                <p className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-0.5 tabular-nums">
+                  {formatCurrency(grandTotal)}
                 </p>
               </div>
             </div>
@@ -137,12 +203,12 @@ export const ExitReportModal: React.FC<ExitReportModalProps> = ({ movement, onCl
             <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
               <p className="text-xs text-slate-500 dark:text-slate-400">Detalle / Motivo de Salida</p>
               <p className="text-sm text-slate-800 dark:text-slate-200 mt-0.5 leading-relaxed">
-                {movement.reason_detail || 'Sin detalle registrado.'}
+                {primary.reason_detail || 'Sin detalle registrado.'}
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                 Despachado por:{' '}
                 <span className="font-medium text-slate-700 dark:text-slate-200">
-                  {movement.operator_name || 'Almacén Central'}
+                  {primary.operator_name || 'Almacén Central'}
                 </span>
               </p>
             </div>

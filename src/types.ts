@@ -11,13 +11,48 @@ export type PermissionKey =
 
 export interface AuthUser {
   id: number;
+  uid?: string | null;
+  username?: string | null;
+  has_password?: boolean;
   name: string;
   email: string;
   role_id: number;
   role_slug: 'admin' | 'almacenista' | 'usuario' | string;
   role_name: string;
+  sector_id?: number | null;
   department: string;
   permissions: Record<PermissionKey, boolean>;
+}
+
+export interface AuthSystemStatus {
+  needsSetup: boolean;
+  hasEnvPasscode: boolean;
+  allowRegistration: boolean;
+  sectors: Array<{ id: number; name: string }>;
+}
+
+export interface Sector {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  active: number;
+  created_at: string;
+  personnel_count?: number;
+}
+
+export interface Personnel {
+  id: number;
+  code: string;
+  name: string;
+  position: string;
+  email: string;
+  phone: string;
+  sector_id: number;
+  sector_name: string;
+  sector_code?: string;
+  active: number;
+  created_at: string;
 }
 
 export interface Category {
@@ -50,6 +85,18 @@ export interface Product {
   created_at: string;
 }
 
+export interface ExitBatch {
+  id: number;
+  folio: string;
+  personnel_id?: number | null;
+  sector_id?: number | null;
+  responsible_name: string;
+  responsible_area: string;
+  reason_detail: string;
+  total_value: number;
+  created_at: string;
+}
+
 export interface Movement {
   id: number;
   folio: string;
@@ -62,9 +109,12 @@ export interface Movement {
   price_previous: number;
   price_resulting: number;
   total_value: number;
+  personnel_id?: number | null;
+  sector_id?: number | null;
   responsible_name: string;
   responsible_area: string;
   reason_detail: string;
+  exit_batch_id?: number | null;
   order_id: number | null;
   user_id: number | null;
   created_at: string;
@@ -75,6 +125,8 @@ export interface Movement {
   category?: string;
   operator_name?: string;
   operator_role?: string;
+  personnel_name?: string;
+  sector_name?: string;
 }
 
 export interface OrderItem {
@@ -96,6 +148,10 @@ export interface WarehouseOrder {
   folio: string;
   requester_id: number;
   requester_name: string;
+  personnel_id?: number | null;
+  sector_id?: number | null;
+  personnel_name?: string;
+  sector_name?: string;
   department: string;
   priority: 'Normal' | 'Urgente';
   status: 'Pendiente' | 'Aprobado' | 'Rechazado' | 'Despachado';
@@ -200,6 +256,8 @@ export interface ReportSummary {
     orders_requested: number;
   }>;
   movementDetails: Movement[];
+  ingresoDetails?: Movement[];
+  egresoDetails?: Movement[];
   filterUsers: Array<{ id: number; name: string; department: string; role_name: string }>;
   filterCategories: Array<{ id: number; code: string; name: string }>;
 }
@@ -221,9 +279,13 @@ export interface PermissionCatalogItem {
 
 export interface SystemUser {
   id: number;
+  uid?: string | null;
+  username?: string | null;
+  has_password?: boolean;
   name: string;
   email: string;
   role_id: number;
+  sector_id?: number | null;
   department: string;
   active: number;
   created_at: string;

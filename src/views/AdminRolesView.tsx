@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Shield, UserPlus, Users, AlertCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import type { PermissionCatalogItem, RoleConfig, SystemUser } from '../types';
+import type { PermissionCatalogItem, RoleConfig, Sector, SystemUser } from '../types';
 
 interface AdminRolesViewProps {
   onPermissionsChanged: () => void;
@@ -10,6 +10,7 @@ interface AdminRolesViewProps {
 export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsChanged }) => {
   const [users, setUsers] = useState<SystemUser[]>([]);
   const [roles, setRoles] = useState<RoleConfig[]>([]);
+  const [sectors, setSectors] = useState<Sector[]>([]);
   const [catalog, setCatalog] = useState<PermissionCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingRoleId, setSavingRoleId] = useState<number | null>(null);
@@ -17,25 +18,33 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
   const [error, setError] = useState('');
 
   const [newName, setNewName] = useState('');
+  const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRoleId, setNewRoleId] = useState<number>(2);
+  const [newSectorId, setNewSectorId] = useState<number>(0);
   const [newDepartment, setNewDepartment] = useState('Operaciones');
   const [creating, setCreating] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [uRes, rRes] = await Promise.all([
+      const [uRes, rRes, sRes] = await Promise.all([
         apiFetch<{ users: SystemUser[] }>('/api/users'),
         apiFetch<{ roles: RoleConfig[]; catalog: PermissionCatalogItem[] }>('/api/roles'),
+        apiFetch<{ sectors: Sector[] }>('/api/sectors'),
       ]);
       setUsers(uRes.users);
       setRoles(rRes.roles);
       setCatalog(rRes.catalog);
+      setSectors(sRes.sectors);
       if (rRes.roles.length > 0) {
         const alm = rRes.roles.find((r) => r.slug === 'almacenista');
         if (alm) setNewRoleId(alm.id);
+      }
+      if (sRes.sectors.length > 0) {
+        setNewSectorId(sRes.sectors[0].id);
+        setNewDepartment(sRes.sectors[0].name);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar roles y usuarios.');
@@ -85,13 +94,16 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
         method: 'POST',
         body: JSON.stringify({
           name: newName,
+          username: newUsername,
           email: newEmail,
           password: newPassword,
           role_id: newRoleId,
+          sector_id: newSectorId > 0 ? newSectorId : null,
           department: newDepartment,
         }),
       });
       setNewName('');
+      setNewUsername('');
       setNewEmail('');
       setNewPassword('');
       setFeedback('Usuario registrado correctamente.');
@@ -147,7 +159,7 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
           Administración de Usuarios y Roles Configurables
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Configura los privilegios de Administrador, Almacenista y Usuario en tiempo real
+          Configura los privilegios de Administrador, Almacenista y Usuario y sus credenciales de acceso
         </p>
       </div>
 
@@ -234,9 +246,13 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
           <div className="flex items-center gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
             <UserPlus className="w-4 h-4 text-blue-700 dark:text-blue-400" />
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Alta de Usuario
+              Registrar Nuevo Usuario
             </h3>
           </div>
+
+          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+            Crea cuentas con usuario y contraseña o pre-autoriza correos de Google con su rol y sector.
+          </p>
 
           <div>
             <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -251,6 +267,34 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
             />
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Usuario
+              </label>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value.toLowerCase())}
+                placeholder="jperez"
+                className="w-full min-h-[42px] px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Contraseña (mín. 6)
+              </label>
+              <input
+                type="password"
+                minLength={6}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={newUsername ? 'Requerida para usuario' : 'Opcional si usa Google'}
+                className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
               Correo electrónico *
@@ -260,6 +304,7 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
               required
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="colaborador@empresa.com"
               className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
             />
           </div>
@@ -283,29 +328,26 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                Área
+                Sector
               </label>
-              <input
-                type="text"
-                value={newDepartment}
-                onChange={(e) => setNewDepartment(e.target.value)}
-                className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
+              <select
+                value={newSectorId}
+                onChange={(e) => {
+                  const sid = Number(e.target.value);
+                  setNewSectorId(sid);
+                  const sec = sectors.find((s) => s.id === sid);
+                  if (sec) setNewDepartment(sec.name);
+                }}
+                className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+              >
+                {sectors.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+                <option value={0}>Otro</option>
+              </select>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Contraseña inicial (mín. 6) *
-            </label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
-            />
           </div>
 
           <button
@@ -313,7 +355,7 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
             disabled={creating}
             className="w-full min-h-[44px] px-4 py-2 rounded-lg bg-slate-900 dark:bg-blue-700 hover:bg-slate-800 dark:hover:bg-blue-800 text-white text-sm font-semibold"
           >
-            {creating ? 'Creando usuario...' : 'Registrar Usuario'}
+            {creating ? 'Registrando...' : 'Autorizar Usuario'}
           </button>
         </form>
 
@@ -328,7 +370,14 @@ export const AdminRolesView: React.FC<AdminRolesViewProps> = ({ onPermissionsCha
             {users.map((u) => (
               <div key={u.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{u.name}</p>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {u.name}
+                    {u.username && (
+                      <span className="ml-2 text-xs font-mono font-normal text-blue-700 dark:text-blue-400">
+                        @{u.username}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     {u.email} · {u.department}
                   </p>

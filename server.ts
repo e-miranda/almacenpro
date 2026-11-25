@@ -2,12 +2,9 @@ import 'dotenv/config';
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { initDatabase } from './server/db.ts';
 import { registerRoutes } from './server/routes.ts';
 
 async function startServer(): Promise<void> {
-  initDatabase();
-
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
@@ -16,7 +13,7 @@ async function startServer(): Promise<void> {
 
   // Health endpoint
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', database: 'sqlite' });
+    res.json({ status: 'ok', database: 'postgresql' });
   });
 
   const isProd = process.env.NODE_ENV === 'production';

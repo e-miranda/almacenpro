@@ -1,10 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { onIdTokenChanged, signOut } from 'firebase/auth';
 import {
+  AlertCircle,
   ArrowLeftRight,
   BarChart3,
   Boxes,
+  Check,
   ClipboardList,
   Database,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -12,13 +16,14 @@ import {
   Package2,
   PanelLeftClose,
   PanelLeftOpen,
-  ScanLine,
+  Search,
   ShieldCheck,
   Sun,
   X,
 } from 'lucide-react';
-import { apiFetch, formatCurrency, setAuthToken } from './lib/api';
-import type { AuthUser, Movement, Product } from './types';
+import { auth } from './lib/firebase';
+import { apiFetch, getAuthToken, setAuthToken } from './lib/api';
+import type { AuthSystemStatus, AuthUser, Movement, Product } from './types';
 import { AuthView } from './views/AuthView';
 import { DashboardView } from './views/DashboardView';
 import { InventoryView } from './views/InventoryView';
@@ -27,22 +32,31 @@ import { OrdersView } from './views/OrdersView';
 import { ReportsView } from './views/ReportsView';
 import { AdminRolesView } from './views/AdminRolesView';
 import { AdminCrudView } from './views/AdminCrudView';
-import { BarcodeScannerModal } from './components/BarcodeScannerModal';
+import { QuickStockSearchModal } from './components/QuickStockSearchModal';
 import { ExitReportModal } from './components/ExitReportModal';
 
 type TabKey = 'dashboard' | 'inventory' | 'movements' | 'orders' | 'reports' | 'roles' | 'cruds';
 
-interface AuthStatusResponse {
-  needsSetup: boolean;
-  hasEnvPasscode: boolean;
-  accounts: Array<{ email: string; name: string; role_slug: string; role_name: string }>;
-}
-
 export default function App() {
-  const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authStatus, setAuthStatus] = useState<AuthSystemStatus>({
+    needsSetup: false,
+    hasEnvPasscode: false,
+    allowRegistration: true,
+    sectors: [],
+  });
   const [user, setUser] = useState<AuthUser | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Change password modal state
+  const [pwdModalOpen, setPwdModalOpen] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmNewPwd, setConfirmNewPwd] = useState('');
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [pwdError, setPwdError] = useState('');
+  const [pwdSuccess, setPwdSuccess] = useState('');
 
   // Sidebar collapse & Dark Mode
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
@@ -95,23 +109,94 @@ export default function App() {
   const [preselectedOrderProd, setPreselectedOrderProd] = useState<Product | null>(null);
 
   // Modals
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scannedResult, setScannedResult] = useState<Product | null>(null);
-  const [scanError, setScanError] = useState('');
-  const [exitReportMovement, setExitReportMovement] = useState<Movement | null>(null);
+  const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [exitReportData, setExitReportData] = useState<{
+    primary: Movement;
+    items?: Movement[];
+  } | null>(null);
 
-  const loadAuthStatus = useCallback(async () => {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setStockSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const pickLandingTab = useCallback((u: AuthUser) => {
+    setActiveTab((prev) => {
+      if (prev !== 'dashboard') return prev;
+      if (u.permissions.view_dashboard) return 'dashboard';
+      if (u.permissions.view_inventory) return 'inventory';
+      return 'orders';
+    });
+  }, []);
+
+  const refreshAuthStatus = useCallback(async () => {
     try {
-      const res = await apiFetch<AuthStatusResponse>('/api/auth/status');
+      const res = await apiFetch<AuthSystemStatus>('/api/auth/status');
       setAuthStatus(res);
     } catch {
-      setAuthStatus({ needsSetup: false, hasEnvPasscode: false, accounts: [] });
+      // keep fallback status
     }
   }, []);
 
   useEffect(() => {
-    loadAuthStatus();
-  }, [loadAuthStatus]);
+    let mounted = true;
+    let statusDone = false;
+    let firebaseDone = false;
+
+    const maybeFinishCheck = () => {
+      if (mounted && statusDone && firebaseDone) {
+        setAuthChecking(false);
+      }
+    };
+
+    refreshAuthStatus().finally(() => {
+      statusDone = true;
+      maybeFinishCheck();
+    });
+
+    const unsubscribe = onIdTokenChanged(auth, async (fbUser) => {
+      if (!mounted) return;
+      if (!fbUser) {
+        // Preserve active classic username/password session held in memory
+        if (!getAuthToken()?.startsWith('ap1.')) {
+          setAuthToken(null);
+          setUser(null);
+        }
+        firebaseDone = true;
+        maybeFinishCheck();
+        return;
+      }
+
+      try {
+        const token = await fbUser.getIdToken();
+        setAuthToken(token);
+        const res = await apiFetch<{ user: AuthUser }>('/api/auth/me');
+        if (!mounted) return;
+        setUser(res.user);
+        pickLandingTab(res.user);
+      } catch {
+        if (!mounted) return;
+        if (!getAuthToken()?.startsWith('ap1.')) {
+          setAuthToken(null);
+          setUser(null);
+        }
+      } finally {
+        firebaseDone = true;
+        maybeFinishCheck();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [pickLandingTab, refreshAuthStatus]);
 
   const loadAllProducts = useCallback(async () => {
     if (!user || !user.permissions.view_inventory) return;
@@ -136,33 +221,57 @@ export default function App() {
     }
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore signOut errors
+    }
     setAuthToken(null);
     setUser(null);
+    setMobileMenuOpen(false);
     setActiveTab('dashboard');
-    loadAuthStatus();
+    await refreshAuthStatus();
   };
 
-  const handleBarcodeDetected = async (code: string) => {
-    setScanError('');
+  const handleChangeOwnPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError('');
+    setPwdSuccess('');
+    if (newPwd.length < 6) {
+      setPwdError('La nueva contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (newPwd !== confirmNewPwd) {
+      setPwdError('Las contraseñas nuevas no coinciden.');
+      return;
+    }
+
+    setPwdSaving(true);
     try {
-      const res = await apiFetch<{ product: Product }>(
-        `/api/products/barcode/${encodeURIComponent(code)}`
-      );
-      setScannedResult(res.product);
+      await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          current_password: currentPwd,
+          new_password: newPwd,
+        }),
+      });
+      setPwdSuccess('Contraseña actualizada correctamente.');
+      setCurrentPwd('');
+      setNewPwd('');
+      setConfirmNewPwd('');
+      await refreshCurrentUser();
     } catch (err) {
-      setInventorySearch(code);
-      setActiveTab('inventory');
-      setScanError(
-        err instanceof Error ? err.message : `No se encontró producto con código ${code}.`
-      );
+      setPwdError(err instanceof Error ? err.message : 'No se pudo cambiar la contraseña.');
+    } finally {
+      setPwdSaving(false);
     }
   };
 
-  if (!authStatus) {
+  if (authChecking) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">
-        Conectando con la base de datos SQLite...
+        Cargando AlmacénPro...
       </div>
     );
   }
@@ -170,10 +279,10 @@ export default function App() {
   if (!user) {
     return (
       <AuthView
-        needsSetup={authStatus.needsSetup}
-        accounts={authStatus.accounts}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode((d) => !d)}
+        authStatus={authStatus}
+        onRefreshStatus={refreshAuthStatus}
         onAuthenticated={(u) => {
           setUser(u);
           if (u.permissions.view_dashboard) setActiveTab('dashboard');
@@ -386,15 +495,41 @@ export default function App() {
             ) : (
               <Moon className="w-4 h-4 text-slate-500 shrink-0" />
             )}
-            {!sidebarCollapsed && (
-              <span>{darkMode ? 'Modo Claro' : 'Modo Oscuro'}</span>
-            )}
+            {!sidebarCollapsed && <span>{darkMode ? 'Modo Claro' : 'Modo Oscuro'}</span>}
             {sidebarCollapsed && (
               <span
                 role="tooltip"
                 className="pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 absolute left-full ml-3 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium whitespace-nowrap shadow-lg border border-slate-700 z-50"
               >
                 {darkMode ? 'Modo Claro' : 'Modo Oscuro'}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setPwdError('');
+              setPwdSuccess('');
+              setCurrentPwd('');
+              setNewPwd('');
+              setConfirmNewPwd('');
+              setPwdModalOpen(true);
+            }}
+            title={sidebarCollapsed ? 'Cambiar contraseña' : undefined}
+            aria-label="Cambiar contraseña"
+            className={`group relative w-full min-h-[40px] rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center transition-colors ${
+              sidebarCollapsed ? 'justify-center px-0' : 'px-3 gap-2'
+            }`}
+          >
+            <KeyRound className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+            {!sidebarCollapsed && <span>Cambiar Contraseña</span>}
+            {sidebarCollapsed && (
+              <span
+                role="tooltip"
+                className="pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 absolute left-full ml-3 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium whitespace-nowrap shadow-lg border border-slate-700 z-50"
+              >
+                Cambiar Contraseña
               </span>
             )}
           </button>
@@ -428,7 +563,7 @@ export default function App() {
           sidebarCollapsed ? 'lg:pl-[72px]' : 'lg:pl-60'
         }`}
       >
-        {/* Compact Top Header (<= 56px mobile, 64px desktop) */}
+        {/* Compact Top Header */}
         <header className="sticky top-0 z-20 h-14 lg:h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 lg:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="lg:hidden w-8 h-8 rounded-lg bg-slate-900 dark:bg-blue-700 text-white flex items-center justify-center shrink-0">
@@ -443,7 +578,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {/* Theme toggle visible on mobile, tablet & desktop top bar */}
             <button
               type="button"
               onClick={() => setDarkMode((d) => !d)}
@@ -457,11 +591,12 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setScannerOpen(true)}
+              onClick={() => setStockSearchOpen(true)}
               className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+              title="Buscar producto y cantidad en existencia (Ctrl+K)"
             >
-              <ScanLine className="w-4 h-4" />
-              <span>Escanear</span>
+              <Search className="w-4 h-4" />
+              <span>Buscar Stock</span>
             </button>
 
             <button
@@ -483,20 +618,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Scan Error Notice */}
-        {scanError && (
-          <div className="mx-4 lg:mx-8 mt-4 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 px-4 py-3 flex items-center justify-between gap-2 text-xs text-amber-900 dark:text-amber-200">
-            <span>{scanError}</span>
-            <button
-              type="button"
-              onClick={() => setScanError('')}
-              className="p-1 text-amber-700 dark:text-amber-300 hover:text-amber-900"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
         {/* Viewport Content */}
         <main className="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto">
           {activeTab === 'dashboard' && user.permissions.view_dashboard && (
@@ -504,7 +625,7 @@ export default function App() {
               user={user}
               onQuickEntry={jumpToEntry}
               onQuickOrder={jumpToOrder}
-              onOpenExitPdf={(m) => setExitReportMovement(m)}
+              onOpenExitPdf={(m) => setExitReportData({ primary: m })}
               onNavigate={(tab) => setActiveTab(tab)}
             />
           )}
@@ -514,7 +635,6 @@ export default function App() {
               user={user}
               externalSearch={inventorySearch}
               onExternalSearchChange={setInventorySearch}
-              onOpenScanner={() => setScannerOpen(true)}
               onStartEntry={jumpToEntry}
               onStartExit={jumpToExit}
               onStartOrder={jumpToOrder}
@@ -529,8 +649,8 @@ export default function App() {
               preselectedProduct={preselectedProduct}
               preselectedMode={preselectedMovMode}
               onClearPreselected={() => setPreselectedProduct(null)}
-              onOpenScanner={() => setScannerOpen(true)}
-              onOpenExitPdf={(m) => setExitReportMovement(m)}
+              onOpenStockSearch={() => setStockSearchOpen(true)}
+              onOpenExitPdf={(m, items) => setExitReportData({ primary: m, items })}
               onStockChanged={() => setRefreshSignal((s) => s + 1)}
             />
           )}
@@ -541,7 +661,7 @@ export default function App() {
               products={products}
               preselectedProduct={preselectedOrderProd}
               onClearPreselected={() => setPreselectedOrderProd(null)}
-              onDispatchedExit={(m) => setExitReportMovement(m)}
+              onDispatchedExit={(m, items) => setExitReportData({ primary: m, items })}
               onStockChanged={() => setRefreshSignal((s) => s + 1)}
             />
           )}
@@ -564,7 +684,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Fixed Bottom Navigation (compact 56px height) */}
+      {/* Mobile Fixed Bottom Navigation */}
       <nav
         className="lg:hidden fixed bottom-0 left-0 right-0 z-30 h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid"
         style={{ gridTemplateColumns: `repeat(${primaryMobileTabs.length}, minmax(0, 1fr))` }}
@@ -637,6 +757,22 @@ export default function App() {
             </button>
             <button
               type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setPwdError('');
+                setPwdSuccess('');
+                setCurrentPwd('');
+                setNewPwd('');
+                setConfirmNewPwd('');
+                setPwdModalOpen(true);
+              }}
+              className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
+            >
+              <KeyRound className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+              <span>Cambiar Contraseña</span>
+            </button>
+            <button
+              type="button"
               onClick={handleLogout}
               className="w-full min-h-[46px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-3"
             >
@@ -647,125 +783,128 @@ export default function App() {
         </div>
       )}
 
-      {/* Barcode Scanner Modal */}
-      <BarcodeScannerModal
-        open={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onDetected={handleBarcodeDetected}
-        sampleProducts={products}
+      {/* Real-Time Product & Stock Search Modal */}
+      <QuickStockSearchModal
+        open={stockSearchOpen}
+        user={user}
+        products={products}
+        onClose={() => setStockSearchOpen(false)}
+        onQuickEntry={jumpToEntry}
+        onQuickExit={jumpToExit}
+        onQuickOrder={jumpToOrder}
+        onViewInInventory={(q) => {
+          setInventorySearch(q);
+          setActiveTab('inventory');
+        }}
       />
 
-      {/* Scanned Product Quick Action Sheet */}
-      {scannedResult && (
+      {/* Exit Report PDF & Export Modal */}
+      <ExitReportModal
+        movement={exitReportData?.primary ?? null}
+        movements={exitReportData?.items}
+        onClose={() => setExitReportData(null)}
+      />
+
+      {/* Change Password Modal */}
+      {pwdModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-xs p-0 sm:p-4"
           role="dialog"
           aria-modal="true"
         >
           <div className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl p-5 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-mono text-blue-700 dark:text-blue-400 font-semibold">
-                  Código detectado: {scannedResult.barcode}
-                </p>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-                  {scannedResult.name}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  {user.has_password ? 'Cambiar Contraseña' : 'Configurar Contraseña Local'}
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  SKU {scannedResult.sku} · {scannedResult.location}
-                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setScannedResult(null)}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={() => setPwdModalOpen(false)}
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/70 rounded-xl p-3 border border-slate-200 dark:border-slate-700 text-xs font-mono tabular-nums">
+            <form onSubmit={handleChangeOwnPassword} className="space-y-3">
+              {user.has_password && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Contraseña actual *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={currentPwd}
+                    onChange={(e) => setCurrentPwd(e.target.value)}
+                    className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                  />
+                </div>
+              )}
               <div>
-                <span className="block font-sans text-slate-500 dark:text-slate-400">Stock</span>
-                <strong className="text-base text-slate-900 dark:text-slate-100">
-                  {scannedResult.stock_current} {scannedResult.unit}
-                </strong>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Nueva contraseña (mín. 6 caracteres) *
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPwd}
+                  onChange={(e) => setNewPwd(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                />
               </div>
               <div>
-                <span className="block font-sans text-slate-500 dark:text-slate-400">Costo</span>
-                <strong className="text-base text-slate-900 dark:text-slate-100">
-                  {formatCurrency(scannedResult.cost_current)}
-                </strong>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Confirmar nueva contraseña *
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={confirmNewPwd}
+                  onChange={(e) => setConfirmNewPwd(e.target.value)}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 rounded-lg"
+                />
               </div>
-              <div className="text-right">
-                <span className="block font-sans text-slate-500 dark:text-slate-400">Precio</span>
-                <strong className="text-base text-blue-800 dark:text-blue-400">
-                  {formatCurrency(scannedResult.price_current)}
-                </strong>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {user.permissions.register_entry && (
+              {pwdError && (
+                <div className="flex items-center gap-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-800 dark:text-red-300">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{pwdError}</span>
+                </div>
+              )}
+
+              {pwdSuccess && (
+                <div className="flex items-center gap-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
+                  <Check className="w-4 h-4 shrink-0" />
+                  <span>{pwdSuccess}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    const p = scannedResult;
-                    setScannedResult(null);
-                    jumpToEntry(p);
-                  }}
-                  className="min-h-[44px] px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium"
+                  onClick={() => setPwdModalOpen(false)}
+                  className="flex-1 min-h-[44px] rounded-lg border border-slate-300 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200"
                 >
-                  Registrar Ingreso
+                  Cerrar
                 </button>
-              )}
-              {user.permissions.register_exit && scannedResult.stock_current > 0 && (
                 <button
-                  type="button"
-                  onClick={() => {
-                    const p = scannedResult;
-                    setScannedResult(null);
-                    jumpToExit(p);
-                  }}
-                  className="min-h-[44px] px-4 py-2 rounded-lg bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 dark:hover:bg-slate-600 text-white text-sm font-medium"
+                  type="submit"
+                  disabled={pwdSaving}
+                  className="flex-1 min-h-[44px] rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white text-sm font-semibold"
                 >
-                  Registrar Salida
+                  {pwdSaving ? 'Guardando...' : 'Guardar'}
                 </button>
-              )}
-              {user.permissions.request_order && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const p = scannedResult;
-                    setScannedResult(null);
-                    jumpToOrder(p);
-                  }}
-                  className="min-h-[44px] px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 text-sm font-medium"
-                >
-                  Solicitar Pedido
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setInventorySearch(scannedResult.barcode);
-                  setScannedResult(null);
-                  setActiveTab('inventory');
-                }}
-                className="min-h-[44px] px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 text-sm font-medium"
-              >
-                Ver en Inventario
-              </button>
-            </div>
+              </div>
+            </form>
           </div>
         </div>
       )}
-
-      {/* Exit Report PDF & Export Modal */}
-      <ExitReportModal
-        movement={exitReportMovement}
-        onClose={() => setExitReportMovement(null)}
-      />
     </div>
   );
 }
