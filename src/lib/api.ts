@@ -16,6 +16,13 @@ export class ApiError extends Error {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
+function resolveApiUrl(url: string): string {
+  if (!API_BASE || /^https?:\/\//i.test(url)) return url;
+  return `${API_BASE}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
 export async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body) {
@@ -25,7 +32,7 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
     headers.set('Authorization', `Bearer ${memoryToken}`);
   }
 
-  const res = await fetch(url, {
+  const res = await fetch(resolveApiUrl(url), {
     ...options,
     headers,
   });
@@ -43,7 +50,7 @@ export async function apiDownload(url: string, fallbackFilename: string): Promis
     headers.set('Authorization', `Bearer ${memoryToken}`);
   }
 
-  const res = await fetch(url, { headers });
+  const res = await fetch(resolveApiUrl(url), { headers });
   if (!res.ok) {
     const errData = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(errData.error || `Error ${res.status}`, res.status);
