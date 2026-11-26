@@ -360,9 +360,6 @@ export default function App() {
   ];
   const navItems = allNavItems.filter((item) => item.visible);
 
-  const primaryMobileTabs = navItems.slice(0, 4);
-  const overflowMobileTabs = navItems.slice(4);
-
   const jumpToEntry = (p: Product) => {
     setPreselectedProduct(p);
     setPreselectedMovMode('INGRESO');
@@ -587,6 +584,15 @@ export default function App() {
         {/* Compact Top Header */}
         <header className="sticky top-0 z-20 h-14 lg:h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 lg:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="lg:hidden min-h-[44px] min-w-[44px] -ml-1.5 flex items-center justify-center rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              aria-label="Abrir menú de navegación"
+              title="Abrir menú"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
             <div className="lg:hidden w-8 h-8 rounded-lg bg-slate-900 dark:bg-blue-700 text-white flex items-center justify-center shrink-0">
               <Package2 className="w-4 h-4" />
             </div>
@@ -598,24 +604,9 @@ export default function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0 lg:hidden">
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="hidden sm:inline-flex min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 items-center gap-1.5"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Salir
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
-              aria-label="Más opciones"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-          </div>
+          <span className="lg:hidden text-xs font-medium text-slate-500 dark:text-slate-400 truncate">
+            {navItems.find((n) => n.key === activeTab)?.label}
+          </span>
         </header>
 
         {/* Viewport Content */}
@@ -684,12 +675,12 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile Fixed Bottom Navigation */}
+      {/* Mobile & Tablet Fixed Bottom Navigation (shows all assigned user tabs) */}
       <nav
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-30 h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid"
-        style={{ gridTemplateColumns: `repeat(${primaryMobileTabs.length}, minmax(0, 1fr))` }}
+        aria-label="Navegación principal móvil"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-30 h-14 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 flex items-stretch overflow-x-auto"
       >
-        {primaryMobileTabs.map((item) => {
+        {navItems.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.key;
           return (
@@ -697,9 +688,10 @@ export default function App() {
               key={item.key}
               type="button"
               onClick={() => setActiveTab(item.key)}
-              className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors ${
+              aria-label={item.label}
+              className={`flex-1 min-w-[70px] px-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors shrink-0 ${
                 active
-                  ? 'text-blue-700 dark:text-blue-400 font-semibold'
+                  ? 'text-blue-700 dark:text-blue-400 font-semibold bg-blue-50/60 dark:bg-blue-950/40'
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
@@ -710,87 +702,129 @@ export default function App() {
         })}
       </nav>
 
-      {/* Mobile Overflow Drawer */}
+      {/* Mobile & Tablet Left Sidebar Drawer (all assigned menu options + utilities) */}
       {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end">
-          <div className="w-full bg-white dark:bg-slate-900 rounded-t-3xl p-5 space-y-3 border-t border-slate-200 dark:border-slate-800">
-            <div className="w-10 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-2" />
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{user.name}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {user.role_name} · {user.department}
-                </p>
+        <div
+          className="lg:hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <aside
+            className="w-72 max-w-[85vw] h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drawer Header */}
+            <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-blue-700 text-white flex items-center justify-center shrink-0">
+                  <Package2 className="w-4 h-4" />
+                </div>
+                <span className="font-display font-bold text-base tracking-tight text-slate-900 dark:text-white whitespace-nowrap truncate">
+                  AlmacénPro
+                </span>
               </div>
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-500 dark:text-slate-400"
+                aria-label="Cerrar menú"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            {overflowMobileTabs.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(item.key);
-                    setMobileMenuOpen(false);
-                  }}
-                  className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
-                >
-                  <Icon className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => {
-                setMobileMenuOpen(false);
-                setStockSearchOpen(true);
-              }}
-              className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
-            >
-              <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <span>Buscar Stock</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDarkMode((d) => !d)}
-              className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
-            >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
-              <span>{darkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMobileMenuOpen(false);
-                setPwdError('');
-                setPwdSuccess('');
-                setCurrentPwd('');
-                setNewPwd('');
-                setConfirmNewPwd('');
-                setPwdModalOpen(true);
-              }}
-              className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
-            >
-              <KeyRound className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-              <span>Cambiar Contraseña</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="w-full min-h-[46px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-3"
-            >
-              <LogOut className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-              <span>Cambiar Usuario / Cerrar Sesión</span>
-            </button>
-          </div>
+
+            {/* All Assigned Navigation Links */}
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const active = activeTab === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(item.key);
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full min-h-[44px] px-3 rounded-lg text-sm font-medium flex items-center gap-2.5 transition-colors whitespace-nowrap ${
+                      active
+                        ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${
+                        active ? 'text-blue-700 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Bottom Controls: User, Buscar Stock, Modo Oscuro, Password & Logout */}
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 space-y-1.5 shrink-0">
+              <div className="px-2 py-1.5 mb-1">
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                  {user.name}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  {user.role_name} · {user.department}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setStockSearchOpen(true);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 transition-colors"
+              >
+                <Search className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                <span>Buscar Stock</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDarkMode((d) => !d)}
+                className="w-full min-h-[44px] px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 transition-colors"
+              >
+                {darkMode ? (
+                  <Sun className="w-4 h-4 text-amber-500 shrink-0" />
+                ) : (
+                  <Moon className="w-4 h-4 text-slate-500 shrink-0" />
+                )}
+                <span>{darkMode ? 'Modo Claro' : 'Modo Oscuro'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setPwdError('');
+                  setPwdSuccess('');
+                  setCurrentPwd('');
+                  setNewPwd('');
+                  setConfirmNewPwd('');
+                  setPwdModalOpen(true);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 transition-colors"
+              >
+                <KeyRound className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                <span>Cambiar Contraseña</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full min-h-[44px] px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 transition-colors"
+              >
+                <LogOut className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                <span>Cambiar Usuario / Salir</span>
+              </button>
+            </div>
+          </aside>
         </div>
       )}
 
