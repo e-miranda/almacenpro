@@ -824,9 +824,9 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
       const dateStamp = new Date().toISOString().slice(0, 10);
       const filename = await apiDownload(
         `/api/admin/export-database?format=${format}`,
-        `almacenpro_respaldo_${dateStamp}.${format}`
+        `almacenpro_estructura_y_datos_${dateStamp}.${format}`
       );
-      setFeedback(`Base de datos exportada correctamente (${filename}).`);
+      setFeedback(`Estructura y datos exportados correctamente (${filename}).`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo exportar la base de datos.');
     } finally {
@@ -854,7 +854,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
             type="button"
             disabled={exportingFormat !== null}
             onClick={() => handleExportDatabase('sql')}
-            title="Descargar respaldo completo PostgreSQL (.sql)"
+            title="Descargar estructura DDL y datos completos PostgreSQL (.sql)"
             className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-800 dark:text-slate-100 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap"
           >
             <FileCode2 className="w-4 h-4 text-blue-700 dark:text-blue-400" />
@@ -865,7 +865,7 @@ export const AdminCrudView: React.FC<AdminCrudViewProps> = ({ user, onDataChange
             type="button"
             disabled={exportingFormat !== null}
             onClick={() => handleExportDatabase('json')}
-            title="Descargar respaldo completo estructurado (.json)"
+            title="Descargar estructura y datos completos (.json)"
             className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 text-slate-800 dark:text-slate-100 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap"
           >
             <Download className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />

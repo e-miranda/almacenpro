@@ -3459,13 +3459,181 @@ export function registerRoutes(app: Express): void {
           db.select().from(movements).orderBy(asc(movements.id)),
         ]);
 
+        const ddlStatements: string[] = [
+          '-- ============================================================================',
+          '-- Estructura de Tablas (DDL PostgreSQL)',
+          '-- ============================================================================',
+          '',
+          `CREATE TABLE IF NOT EXISTS "roles" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "slug" text NOT NULL UNIQUE,
+  "name" text NOT NULL,
+  "description" text DEFAULT '' NOT NULL,
+  "is_system" integer DEFAULT 1 NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "role_permissions" (
+  "role_id" integer NOT NULL REFERENCES "roles"("id") ON DELETE CASCADE,
+  "permission_key" text NOT NULL,
+  "allowed" integer DEFAULT 0 NOT NULL,
+  PRIMARY KEY ("role_id", "permission_key")
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "sectors" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "code" text NOT NULL UNIQUE,
+  "name" text NOT NULL UNIQUE,
+  "description" text DEFAULT '' NOT NULL,
+  "active" integer DEFAULT 1 NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "personnel" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "code" text NOT NULL UNIQUE,
+  "name" text NOT NULL,
+  "position" text DEFAULT 'Operador' NOT NULL,
+  "email" text DEFAULT '' NOT NULL,
+  "phone" text DEFAULT '' NOT NULL,
+  "sector_id" integer NOT NULL REFERENCES "sectors"("id") ON DELETE RESTRICT,
+  "active" integer DEFAULT 1 NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "users" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "uid" text UNIQUE,
+  "username" text UNIQUE,
+  "password_hash" text,
+  "name" text NOT NULL,
+  "email" text NOT NULL UNIQUE,
+  "role_id" integer NOT NULL REFERENCES "roles"("id"),
+  "sector_id" integer REFERENCES "sectors"("id") ON DELETE SET NULL,
+  "department" text DEFAULT 'Operaciones' NOT NULL,
+  "active" integer DEFAULT 1 NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "categories" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "code" text NOT NULL UNIQUE,
+  "name" text NOT NULL UNIQUE,
+  "description" text DEFAULT '' NOT NULL,
+  "active" integer DEFAULT 1 NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "products" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "sku" text NOT NULL UNIQUE,
+  "barcode" text NOT NULL UNIQUE,
+  "name" text NOT NULL,
+  "description" text DEFAULT '' NOT NULL,
+  "category_id" integer REFERENCES "categories"("id") ON DELETE SET NULL,
+  "category" text NOT NULL,
+  "unit" text DEFAULT 'Pza' NOT NULL,
+  "location" text DEFAULT 'Pasillo A' NOT NULL,
+  "stock_current" integer DEFAULT 0 NOT NULL,
+  "stock_min" integer DEFAULT 5 NOT NULL,
+  "cost_previous" double precision DEFAULT 0 NOT NULL,
+  "cost_current" double precision DEFAULT 0 NOT NULL,
+  "margin_percent" double precision DEFAULT 30 NOT NULL,
+  "price_current" double precision DEFAULT 0 NOT NULL,
+  "updated_at" timestamp DEFAULT now() NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "orders" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "folio" text NOT NULL UNIQUE,
+  "requester_id" integer NOT NULL REFERENCES "users"("id"),
+  "requester_name" text NOT NULL,
+  "personnel_id" integer REFERENCES "personnel"("id") ON DELETE SET NULL,
+  "sector_id" integer REFERENCES "sectors"("id") ON DELETE SET NULL,
+  "department" text NOT NULL,
+  "priority" text DEFAULT 'Normal' NOT NULL,
+  "status" text DEFAULT 'Pendiente' NOT NULL,
+  "notes" text DEFAULT '' NOT NULL,
+  "reviewed_by" text,
+  "reviewed_at" timestamp,
+  "review_notes" text,
+  "dispatched_by" text,
+  "dispatched_at" timestamp,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "order_items" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "order_id" integer NOT NULL REFERENCES "orders"("id") ON DELETE CASCADE,
+  "product_id" integer NOT NULL REFERENCES "products"("id"),
+  "quantity_requested" integer NOT NULL,
+  "quantity_approved" integer DEFAULT 0 NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "exit_batches" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "folio" text NOT NULL UNIQUE,
+  "personnel_id" integer REFERENCES "personnel"("id") ON DELETE SET NULL,
+  "sector_id" integer REFERENCES "sectors"("id") ON DELETE SET NULL,
+  "responsible_name" text DEFAULT '' NOT NULL,
+  "responsible_area" text DEFAULT '' NOT NULL,
+  "reason_detail" text DEFAULT '' NOT NULL,
+  "order_id" integer REFERENCES "orders"("id") ON DELETE SET NULL,
+  "user_id" integer REFERENCES "users"("id") ON DELETE SET NULL,
+  "total_value" double precision DEFAULT 0 NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+          '',
+          `CREATE TABLE IF NOT EXISTS "movements" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "folio" text NOT NULL,
+  "type" text NOT NULL,
+  "product_id" integer NOT NULL REFERENCES "products"("id"),
+  "quantity" integer NOT NULL,
+  "cost_previous" double precision DEFAULT 0 NOT NULL,
+  "cost_entry" double precision DEFAULT 0 NOT NULL,
+  "cost_resulting" double precision DEFAULT 0 NOT NULL,
+  "price_previous" double precision DEFAULT 0 NOT NULL,
+  "price_resulting" double precision DEFAULT 0 NOT NULL,
+  "total_value" double precision DEFAULT 0 NOT NULL,
+  "personnel_id" integer REFERENCES "personnel"("id") ON DELETE SET NULL,
+  "sector_id" integer REFERENCES "sectors"("id") ON DELETE SET NULL,
+  "responsible_name" text DEFAULT '' NOT NULL,
+  "responsible_area" text DEFAULT '' NOT NULL,
+  "reason_detail" text DEFAULT '' NOT NULL,
+  "exit_batch_id" integer REFERENCES "exit_batches"("id") ON DELETE SET NULL,
+  "order_id" integer REFERENCES "orders"("id") ON DELETE SET NULL,
+  "user_id" integer REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);`,
+        ];
+
+        const schemaMetadata = {
+          roles: ['id (serial PK)', 'slug (text NOT NULL UNIQUE)', 'name (text NOT NULL)', 'description (text)', 'is_system (integer)'],
+          role_permissions: ['role_id (integer PK FK->roles.id)', 'permission_key (text PK)', 'allowed (integer)'],
+          sectors: ['id (serial PK)', 'code (text NOT NULL UNIQUE)', 'name (text NOT NULL UNIQUE)', 'description (text)', 'active (integer)', 'created_at (timestamp)'],
+          personnel: ['id (serial PK)', 'code (text NOT NULL UNIQUE)', 'name (text NOT NULL)', 'position (text)', 'email (text)', 'phone (text)', 'sector_id (integer FK->sectors.id)', 'active (integer)', 'created_at (timestamp)'],
+          users: ['id (serial PK)', 'uid (text UNIQUE)', 'username (text UNIQUE)', 'password_hash (text)', 'name (text NOT NULL)', 'email (text NOT NULL UNIQUE)', 'role_id (integer FK->roles.id)', 'sector_id (integer FK->sectors.id)', 'department (text)', 'active (integer)', 'created_at (timestamp)'],
+          categories: ['id (serial PK)', 'code (text NOT NULL UNIQUE)', 'name (text NOT NULL UNIQUE)', 'description (text)', 'active (integer)', 'created_at (timestamp)'],
+          products: ['id (serial PK)', 'sku (text NOT NULL UNIQUE)', 'barcode (text NOT NULL UNIQUE)', 'name (text NOT NULL)', 'description (text)', 'category_id (integer FK->categories.id)', 'category (text NOT NULL)', 'unit (text)', 'location (text)', 'stock_current (integer)', 'stock_min (integer)', 'cost_previous (double precision)', 'cost_current (double precision)', 'margin_percent (double precision)', 'price_current (double precision)', 'updated_at (timestamp)', 'created_at (timestamp)'],
+          orders: ['id (serial PK)', 'folio (text NOT NULL UNIQUE)', 'requester_id (integer FK->users.id)', 'requester_name (text NOT NULL)', 'personnel_id (integer FK->personnel.id)', 'sector_id (integer FK->sectors.id)', 'department (text NOT NULL)', 'priority (text)', 'status (text)', 'notes (text)', 'reviewed_by (text)', 'reviewed_at (timestamp)', 'review_notes (text)', 'dispatched_by (text)', 'dispatched_at (timestamp)', 'created_at (timestamp)'],
+          order_items: ['id (serial PK)', 'order_id (integer FK->orders.id)', 'product_id (integer FK->products.id)', 'quantity_requested (integer NOT NULL)', 'quantity_approved (integer)'],
+          exit_batches: ['id (serial PK)', 'folio (text NOT NULL UNIQUE)', 'personnel_id (integer FK->personnel.id)', 'sector_id (integer FK->sectors.id)', 'responsible_name (text)', 'responsible_area (text)', 'reason_detail (text)', 'order_id (integer FK->orders.id)', 'user_id (integer FK->users.id)', 'total_value (double precision)', 'created_at (timestamp)'],
+          movements: ['id (serial PK)', 'folio (text NOT NULL)', 'type (text NOT NULL)', 'product_id (integer FK->products.id)', 'quantity (integer NOT NULL)', 'cost_previous (double precision)', 'cost_entry (double precision)', 'cost_resulting (double precision)', 'price_previous (double precision)', 'price_resulting (double precision)', 'total_value (double precision)', 'personnel_id (integer FK->personnel.id)', 'sector_id (integer FK->sectors.id)', 'responsible_name (text)', 'responsible_area (text)', 'reason_detail (text)', 'exit_batch_id (integer FK->exit_batches.id)', 'order_id (integer FK->orders.id)', 'user_id (integer FK->users.id)', 'created_at (timestamp)'],
+        };
+
         if (format === 'json') {
           const payload = {
-            app: 'AlmacénPro',
+            app: 'AlmacénPro — Centro de salud Pumas Andinos',
             database: 'postgresql',
+            includes_structure_and_data: true,
             exported_at: new Date().toISOString(),
             security_note:
               'Los hashes de contraseñas (password_hash) se excluyen por seguridad.',
+            structure: {
+              columns: schemaMetadata,
+              ddl_sql: ddlStatements.join('\n'),
+            },
             counts: {
               roles: rolesRows.length,
               role_permissions: rolePermRows.length,
@@ -3497,7 +3665,7 @@ export function registerRoutes(app: Express): void {
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
           res.setHeader(
             'Content-Disposition',
-            `attachment; filename="almacenpro_respaldo_${dateStamp}.json"`
+            `attachment; filename="almacenpro_estructura_y_datos_${dateStamp}.json"`
           );
           res.send(JSON.stringify(payload, null, 2));
           return;
@@ -3551,12 +3719,19 @@ export function registerRoutes(app: Express): void {
 
         const sqlLines: string[] = [
           '-- ============================================================================',
-          '-- AlmacénPro - Respaldo completo de base de datos PostgreSQL',
+          '-- AlmacénPro (Centro de salud Pumas Andinos) - Estructura y Datos PostgreSQL',
           `-- Exportado: ${new Date().toISOString()}`,
+          '-- Incluye: DDL completo (CREATE TABLE IF NOT EXISTS) + datos (INSERT INTO)',
           '-- Nota: password_hash de usuarios excluido por seguridad.',
           '-- ============================================================================',
           '',
           'BEGIN;',
+          '',
+          ...ddlStatements,
+          '',
+          '-- ============================================================================',
+          '-- Datos de Tablas',
+          '-- ============================================================================',
           '',
           ...buildInserts(
             'roles',
@@ -3801,7 +3976,7 @@ export function registerRoutes(app: Express): void {
           '-- Sincronizar secuencias autoincrementales',
           ...serialTables.map(
             (t) =>
-              `SELECT setval(pg_get_serial_sequence('${t}', 'id'), COALESCE((SELECT MAX(id) FROM "${t}"), 1), true);`
+              `SELECT setval(pg_get_serial_sequence('${t}', 'id'), COALESCE((SELECT MAX(id) FROM "${t}"), 1), (SELECT COUNT(*) > 0 FROM "${t}"));`
           ),
           '',
           'COMMIT;',
@@ -3811,7 +3986,7 @@ export function registerRoutes(app: Express): void {
         res.setHeader('Content-Type', 'application/sql; charset=utf-8');
         res.setHeader(
           'Content-Disposition',
-          `attachment; filename="almacenpro_respaldo_${dateStamp}.sql"`
+          `attachment; filename="almacenpro_estructura_y_datos_${dateStamp}.sql"`
         );
         res.send(sqlLines.join('\n'));
       } catch (err) {
