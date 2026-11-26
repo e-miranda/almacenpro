@@ -468,7 +468,7 @@ export default function App() {
           })}
         </nav>
 
-        {/* Bottom Controls: Theme Toggle & User / Logout */}
+        {/* Bottom Controls: Stock Search, Theme Toggle & User / Logout */}
         <div className="p-3 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
           {!sidebarCollapsed && (
             <div className="px-2 py-1.5 mb-1">
@@ -480,6 +480,27 @@ export default function App() {
               </p>
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => setStockSearchOpen(true)}
+            title={sidebarCollapsed ? 'Buscar Stock (Ctrl+K)' : 'Buscar producto y cantidad en existencia (Ctrl+K)'}
+            aria-label="Buscar Stock"
+            className={`group relative w-full min-h-[40px] rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center transition-colors ${
+              sidebarCollapsed ? 'justify-center px-0' : 'px-3 gap-2'
+            }`}
+          >
+            <Search className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            {!sidebarCollapsed && <span>Buscar Stock</span>}
+            {sidebarCollapsed && (
+              <span
+                role="tooltip"
+                className="pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 absolute left-full ml-3 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-medium whitespace-nowrap shadow-lg border border-slate-700 z-50"
+              >
+                Buscar Stock
+              </span>
+            )}
+          </button>
 
           <button
             type="button"
@@ -577,32 +598,11 @@ export default function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setDarkMode((d) => !d)}
-              title={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
-              aria-label={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
-              className="min-h-[40px] min-w-[40px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center justify-center gap-1.5 text-xs font-medium transition-colors"
-            >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
-              <span className="hidden sm:inline">{darkMode ? 'Claro' : 'Oscuro'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStockSearchOpen(true)}
-              className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-              title="Buscar producto y cantidad en existencia (Ctrl+K)"
-            >
-              <Search className="w-4 h-4" />
-              <span>Buscar Stock</span>
-            </button>
-
+          <div className="flex items-center gap-2 shrink-0 lg:hidden">
             <button
               type="button"
               onClick={handleLogout}
-              className="hidden sm:inline-flex lg:hidden min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 items-center gap-1.5"
+              className="hidden sm:inline-flex min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 items-center gap-1.5"
             >
               <LogOut className="w-3.5 h-3.5" /> Salir
             </button>
@@ -610,7 +610,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
               aria-label="Más opciones"
             >
               <Menu className="w-5 h-5" />
@@ -747,6 +747,17 @@ export default function App() {
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setStockSearchOpen(true);
+              }}
+              className="w-full min-h-[46px] px-4 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium text-slate-900 dark:text-slate-100 flex items-center gap-3"
+            >
+              <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <span>Buscar Stock</span>
+            </button>
             <button
               type="button"
               onClick={() => setDarkMode((d) => !d)}
